@@ -30,36 +30,262 @@
             <div class="gallery">
                 <div class="card">
                     <p class="chip">Uploaded</p>
-                    <img class="preview" src={{results.image_origin}} alt="Original" />
+                    <img class="preview" src="{{ results.image_origin }}" alt="Original" />
                 </div>
                 <div class="card">
                     <p class="chip">Segmented</p>
-                    <img class="preview" src={{results.image_seglab}} alt="Segmented" />
+                    <div class="segmented-hover-wrap" id="segmented-hover-wrap">
+                        <img class="preview segmented-preview" id="segmented-preview" src="{{ results.image_seglab }}" alt="Segmented" />
+                        <div id="food-hover-tooltip" class="food-hover-tooltip" style="display: none;"></div>
+                    </div>
+                    <p class="muted">Move your mouse on segmented foods to see item details.</p>
                 </div>
             </div>
 
+            {% if results.part_cutouts and results.part_cutouts|length > 0 %}
+            <div class="cutout-wrap">
+                <h3>Food Part Cutouts</h3>
+                <p>These cutouts map each detected food area to help verify correspondence.</p>
+                <div class="cutout-grid">
+                    {% for part in results.part_cutouts %}
+                    <div class="cutout-card">
+                        <div class="chip">Part {{ part.part_id }}</div>
+                        <img src="{{ part.cutout_image }}" alt="Part {{ part.part_id }} cutout" class="cutout-preview">
+                        <div class="muted">{{ part.food_name }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
             <div class="metrics">
+                <div class="metric">Estimated mass: {{results.image_report.total_weight_g}} g</div>
+                <div class="metric">Calories: {{results.image_report.calories}} kcal</div>
                 <div class="metric">Carbohydrate: {{results.image_report.carbs}} g</div>
                 <div class="metric">Protein: {{results.image_report.protein}} g</div>
                 <div class="metric">Fat: {{results.image_report.fat}} g</div>
             </div>
 
-            <div class="food-list">
-                {% for food_item in results.image_report.food_items %}
-                    <div class="card">
-                        <h4>{{food_item.food_name}}</h4>
-                        <p>Weight: {{food_item.weight_g}} g</p>
-                        <p>Carbohydrate: {{food_item.carbs}} g</p>
-                        <p>Protein: {{food_item.protein}} g</p>
-                        <p>Fat: {{food_item.fat}} g</p>
-                    </div>
-                {% endfor %}
+            <div class="food-table-wrap">
+                <h3>Detected Foods and Nutrition</h3>
+                {% if results.image_report.food_items and results.image_report.food_items|length > 0 %}
+                <table class="food-table">
+                    <colgroup>
+                        <col class="col-food">
+                        <col class="col-parts">
+                        <col class="col-mass">
+                        <col class="col-calories">
+                        <col class="col-carbs">
+                        <col class="col-protein">
+                        <col class="col-fat">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th>Food</th>
+                            <th>Recognized Parts</th>
+                            <th>Mass (g)</th>
+                            <th>Calories (kcal)</th>
+                            <th>Carbs (g)</th>
+                            <th>Protein (g)</th>
+                            <th>Fat (g)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for food_item in results.image_report.food_items %}
+                        <tr>
+                            <td>{{food_item.food_name}}</td>
+                            <td>
+                                {% if food_item.recognized_parts and food_item.recognized_parts|length > 0 %}
+                                <div class="row-part-list">
+                                    {% for part_img in food_item.recognized_parts %}
+                                    <img src="{{ part_img }}" alt="{{ food_item.food_name }} part" class="row-part-thumb">
+                                    {% endfor %}
+                                </div>
+                                {% else %}
+                                <span class="muted">No part preview</span>
+                                {% endif %}
+                            </td>
+                            <td>{{food_item.weight_g}}</td>
+                            <td>{{food_item.calories}}</td>
+                            <td>{{food_item.carbs}}</td>
+                            <td>{{food_item.protein}}</td>
+                            <td>{{food_item.fat}}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td>Total</td>
+                            <td>-</td>
+                            <td>{{results.image_report.total_weight_g}}</td>
+                            <td>{{results.image_report.calories}}</td>
+                            <td>{{results.image_report.carbs}}</td>
+                            <td>{{results.image_report.protein}}</td>
+                            <td>{{results.image_report.fat}}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+                {% else %}
+                <p>No food items were detected for this image.</p>
+                {% endif %}
             </div>
+
+            {% if results.hover_items and results.hover_items|length > 0 %}
+            <div class="relabel-wrap">
+                <h3>Correct Food Labels</h3>
+                <p>If a detected type is wrong, update the food name for that region and recalculate nutrition.</p>
+                <datalist id="food-name-options">
+                    {% for food_name in results.food_name_options %}
+                    <option value="{{ food_name }}"></option>
+                    {% endfor %}
+                </datalist>
+                <div class="relabel-list">
+                    {% for item in results.hover_items %}
+                    <div class="relabel-row">
+                        <div class="relabel-meta">
+                            <strong>Region {{ item.id }}</strong>
+                            <span>Current: {{ item.food_name }} ({{ item.weight_g }} g)</span>
+                        </div>
+                        <input
+                            type="text"
+                            class="relabel-input"
+                            list="food-name-options"
+                            id="relabel-input-{{ item.id }}"
+                            value="{{ item.food_name }}"
+                            placeholder="Enter food name"
+                        >
+                        <button
+                            type="button"
+                            class="relabel-btn"
+                            data-region-id="{{ item.id }}"
+                        >Update</button>
+                    </div>
+                    {% endfor %}
+                </div>
+                <p id="relabel-status" class="muted" aria-live="polite"></p>
+            </div>
+            {% endif %}
 
             <form method="POST" class="actions">
                 <input type="submit" name="next" value="See Recommendations">
             </form>
         </section>
     </main>
+
+    <script>
+    (function() {
+        const imageName = {{ (results.image_name or '') | tojson }};
+        const hoverItems = {{ (results.hover_items or []) | tojson }};
+        const regionMapSrc = {{ (results.image_region_map or '') | tojson }};
+        const segImg = document.getElementById('segmented-preview');
+        const tip = document.getElementById('food-hover-tooltip');
+        if (!segImg || !tip || !hoverItems || hoverItems.length === 0 || !regionMapSrc) {
+            return;
+        }
+
+        const itemById = {};
+        hoverItems.forEach(item => {
+            itemById[String(item.id)] = item;
+        });
+
+        const regionImg = new Image();
+        regionImg.src = regionMapSrc;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        let ready = false;
+
+        regionImg.onload = function() {
+            canvas.width = regionImg.naturalWidth;
+            canvas.height = regionImg.naturalHeight;
+            ctx.drawImage(regionImg, 0, 0);
+            ready = true;
+        };
+
+        function hideTip() {
+            tip.style.display = 'none';
+        }
+
+        function showTip(evt, item) {
+            tip.innerHTML = `
+                <strong>${item.food_name}</strong><br>
+                Mass: ${item.weight_g} g<br>
+                Calories: ${item.calories} kcal<br>
+                Carbs: ${item.carbs} g<br>
+                Protein: ${item.protein} g<br>
+                Fat: ${item.fat} g
+            `;
+            tip.style.display = 'block';
+            const offsetX = 14;
+            const offsetY = 14;
+            tip.style.left = `${evt.pageX + offsetX}px`;
+            tip.style.top = `${evt.pageY + offsetY}px`;
+        }
+
+        segImg.addEventListener('mousemove', function(evt) {
+            if (!ready || segImg.naturalWidth === 0 || segImg.naturalHeight === 0) {
+                hideTip();
+                return;
+            }
+
+            const rect = segImg.getBoundingClientRect();
+            const rx = (evt.clientX - rect.left) / rect.width;
+            const ry = (evt.clientY - rect.top) / rect.height;
+            if (rx < 0 || rx > 1 || ry < 0 || ry > 1) {
+                hideTip();
+                return;
+            }
+
+            const px = Math.max(0, Math.min(canvas.width - 1, Math.floor(rx * canvas.width)));
+            const py = Math.max(0, Math.min(canvas.height - 1, Math.floor(ry * canvas.height)));
+            const pixel = ctx.getImageData(px, py, 1, 1).data;
+            const regionId = String(pixel[0]);
+            if (!regionId || regionId === '0' || !itemById[regionId]) {
+                hideTip();
+                return;
+            }
+
+            showTip(evt, itemById[regionId]);
+        });
+
+        segImg.addEventListener('mouseleave', hideTip);
+
+        const statusEl = document.getElementById('relabel-status');
+        document.querySelectorAll('.relabel-btn').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const regionId = Number(btn.getAttribute('data-region-id') || '0');
+                const input = document.getElementById(`relabel-input-${regionId}`);
+                const foodName = (input && input.value ? input.value : '').trim();
+                if (!foodName) {
+                    if (statusEl) statusEl.textContent = 'Please enter a food name before updating.';
+                    return;
+                }
+
+                if (statusEl) statusEl.textContent = `Updating region ${regionId}...`;
+                btn.disabled = true;
+                try {
+                    const resp = await fetch('/api/update-image-food-label', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            image_name: imageName,
+                            region_id: regionId,
+                            food_name: foodName
+                        })
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok || !data.success) {
+                        throw new Error(data.error || 'Failed to update label');
+                    }
+                    if (statusEl) statusEl.textContent = `Updated region ${regionId} to ${data.resolved_food_name}. Reloading...`;
+                    window.location.reload();
+                } catch (err) {
+                    if (statusEl) statusEl.textContent = `Update failed: ${err.message}`;
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+        });
+    })();
+    </script>
 </body>
 </html>

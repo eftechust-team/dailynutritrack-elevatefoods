@@ -22,6 +22,7 @@ main {
 	width: 100%;
 	height: 100%;
 	overflow: hidden;
+	align-items: start;
 }
 
 .col {
@@ -43,7 +44,8 @@ main {
 }
 
 .col-middle {
-	padding: 20px 12px;
+	padding: 0 12px 20px;
+	margin-top: -14px;
 	border-right: 1px solid var(--border);
 	font-size: 0.8rem;
 }
@@ -238,7 +240,6 @@ main {
 .btn-send:hover {
 	background: #ff6b1f;
 	transform: translateY(-1px);
-	box-shadow: 0 4px 12px rgba(255, 122, 61, 0.3);
 }
 
 .input-section small {
@@ -492,7 +493,6 @@ main {
 .btn-primary:hover {
 	background: #ff6b1f;
 	transform: translateY(-1px);
-	box-shadow: 0 4px 12px rgba(255, 122, 61, 0.3);
 }
 
 /* ── Responsive ─────────────────────────────────────────────── */
@@ -526,6 +526,7 @@ main {
 	.col-middle {
 		border-right: none;
 		border-bottom: 1px solid var(--border);
+		margin-top: 0;
 	}
 
 	.messages-area {
@@ -556,6 +557,7 @@ main {
 	.col-middle {
 		border-right: none;
 		border-bottom: 1px solid var(--border);
+		margin-top: 0;
 	}
 
 	.nutrition-tracker,

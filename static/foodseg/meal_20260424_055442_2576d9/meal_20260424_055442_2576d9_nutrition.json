@@ -1,0 +1,24 @@
+{
+    "total_volume_cm3": 568.69,
+    "total_weight_g": 341.22,
+    "calories": 116.01,
+    "protein": 10.24,
+    "fat": 1.36,
+    "carbs": 23.89,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 111,
+            "food_name": "bak choi",
+            "volume_cm3": 568.69,
+            "weight_g": 341.22,
+            "calories": 116.01,
+            "protein": 10.24,
+            "fat": 1.36,
+            "carbs": 23.89,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ]
+}

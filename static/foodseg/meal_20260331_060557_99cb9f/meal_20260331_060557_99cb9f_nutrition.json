@@ -1,0 +1,36 @@
+{
+    "total_volume_cm3": 489.83,
+    "total_weight_g": 504.84,
+    "calories": 451.1,
+    "protein": 22.96,
+    "fat": 17.44,
+    "carbs": 61.43,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 87,
+            "food_name": "broccoli",
+            "volume_cm3": 489.83,
+            "weight_g": 293.9,
+            "calories": 99.93,
+            "protein": 8.82,
+            "fat": 1.18,
+            "carbs": 20.57,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 0,
+            "food_name": "mixed vegetable salad",
+            "volume_cm3": 0.0,
+            "weight_g": 210.94,
+            "calories": 351.17,
+            "protein": 14.14,
+            "fat": 16.26,
+            "carbs": 40.86,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ]
+}

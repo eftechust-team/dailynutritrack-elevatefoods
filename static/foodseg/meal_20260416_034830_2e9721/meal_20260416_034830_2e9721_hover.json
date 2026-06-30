@@ -1,0 +1,123 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "braised pork belly with tofu skin",
+            "weight_g": 430.0,
+            "calories": 693.65,
+            "carbs": 79.99,
+            "protein": 28.34,
+            "fat": 32.19,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 719,
+                "y_max": 539
+            },
+            "confidence": 0.91
+        },
+        {
+            "id": 2,
+            "food_name": "tilapia fish soup",
+            "weight_g": 780.0,
+            "calories": 1258.25,
+            "carbs": 145.09,
+            "protein": 51.4,
+            "fat": 58.39,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 719,
+                "y_max": 539
+            },
+            "confidence": 0.89
+        },
+        {
+            "id": 3,
+            "food_name": "bok choy with fried shrimp",
+            "weight_g": 340.0,
+            "calories": 548.47,
+            "carbs": 63.25,
+            "protein": 22.41,
+            "fat": 25.45,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 719,
+                "y_max": 539
+            },
+            "confidence": 0.9
+        },
+        {
+            "id": 4,
+            "food_name": "lychee",
+            "weight_g": 190.0,
+            "calories": 306.5,
+            "carbs": 35.34,
+            "protein": 12.52,
+            "fat": 14.22,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 719,
+                "y_max": 539
+            },
+            "confidence": 0.87
+        },
+        {
+            "id": 5,
+            "food_name": "mangosteen",
+            "weight_g": 120.0,
+            "calories": 193.58,
+            "carbs": 22.32,
+            "protein": 7.91,
+            "fat": 8.98,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 719,
+                "y_max": 539
+            },
+            "confidence": 0.82
+        },
+        {
+            "id": 6,
+            "food_name": "banana",
+            "weight_g": 230.0,
+            "calories": 204.7,
+            "carbs": 52.9,
+            "protein": 2.3,
+            "fat": 0.69,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 719,
+                "y_max": 539
+            },
+            "confidence": 0.86
+        },
+        {
+            "id": 7,
+            "food_name": "chinese bayberry",
+            "weight_g": 150.0,
+            "calories": 241.97,
+            "carbs": 27.9,
+            "protein": 9.88,
+            "fat": 11.23,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 719,
+                "y_max": 539
+            },
+            "confidence": 0.84
+        }
+    ]
+}

@@ -1,8 +1,10 @@
 Flask==3.0.2
 requests==2.31.0
+Pillow==10.4.0
 numpy==1.24.3
 scipy==1.11.4
 numpy-stl==3.1.1
 google-cloud-storage==2.16.0
 google-auth==2.26.2
 gunicorn==21.2.0
+anthropic>=0.25.0

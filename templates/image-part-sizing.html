@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/base.css">
+    <link rel="stylesheet" href="/static/image-part-sizing.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ELEVATEFOODS</title>
+</head>
+
+<body>
+    <header>
+        <div class="brand">ELEVATEFOODS <span class="badge">Beta</span></div>
+        <div class="steps">
+            <div class="step">1 · Data</div>
+            <div class="step active">2 · Upload</div>
+            <div class="step">3 · Plan</div>
+        </div>
+    </header>
+
+    <main>
+        <section class="panel">
+            <h2>Food Part Confirmation</h2>
+            <p>Review each cutout and provide container size details before nutrition grams are estimated.</p>
+            {% if prep.error %}
+            <p class="error-text">{{ prep.error }}</p>
+            {% endif %}
+
+            <div class="gallery">
+                <div class="card">
+                    <p class="chip">Uploaded</p>
+                    <img class="preview" src="{{ prep.image_origin }}" alt="Uploaded image" />
+                </div>
+                <div class="card">
+                    <p class="chip">Segmented</p>
+                    <img class="preview" src="/static/foodseg/{{ prep.image_name }}/{{ prep.image_name }}_labeled_seg.png" alt="Segmented image" />
+                </div>
+            </div>
+
+            <form method="post" action="/analyze_image_parts" id="part-sizing-form">
+                <input type="hidden" name="image_filename" value="{{ prep.image_filename }}">
+
+                <div class="parts-grid">
+                    {% for part in prep.parts %}
+                    <div class="part-card">
+                        <div class="part-head">Part {{ part.part_id }}</div>
+                        <img class="part-cutout" src="{{ part.cutout_image }}" alt="Food part {{ part.part_id }}">
+
+                        <input type="hidden" name="part_id" value="{{ part.part_id }}">
+
+                        <label>Food name</label>
+                        <input type="text" name="food_name" value="{{ part.food_name }}" required>
+
+                        <label>Container type</label>
+                        <select name="container_type">
+                            <option value="plate">Plate</option>
+                            <option value="bowl">Bowl</option>
+                            <option value="cup">Cup</option>
+                            <option value="box">Box</option>
+                            <option value="other">Other</option>
+                        </select>
+
+                        <label>Container size (cm)</label>
+                        <input type="number" name="container_size_cm" min="3" max="80" step="0.5" value="{{ part.container_size_cm }}" required>
+
+                        <label>Food depth in container (cm)</label>
+                        <input type="number" name="container_depth_cm" min="0.3" max="20" step="0.1" value="{{ part.container_depth_cm }}" required>
+
+                        <label>Fill ratio (0 to 1)</label>
+                        <input type="number" name="fill_ratio" min="0.05" max="1" step="0.05" value="{{ part.fill_ratio }}" required>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <div class="actions">
+                    <input type="submit" id="analyze-parts-submit" value="Estimate Nutrition & Grams">
+                </div>
+                <p id="submit-status" class="muted" aria-live="polite"></p>
+            </form>
+        </section>
+    </main>
+
+    <script>
+    (function() {
+        const form = document.getElementById('part-sizing-form');
+        const submit = document.getElementById('analyze-parts-submit');
+        const statusEl = document.getElementById('submit-status');
+        if (!form || !submit || !statusEl) return;
+
+        form.addEventListener('submit', function() {
+            submit.disabled = true;
+            submit.value = 'Estimating...';
+            statusEl.textContent = 'Sending part sizes to Doubao and estimating nutrition...';
+        });
+    })();
+    </script>
+</body>
+
+</html>

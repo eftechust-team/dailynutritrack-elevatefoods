@@ -1,0 +1,36 @@
+{
+    "total_volume_cm3": 593.32,
+    "total_weight_g": 356.0,
+    "calories": 66.58,
+    "protein": 3.56,
+    "fat": 0.7,
+    "carbs": 14.8,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 73,
+            "food_name": "tomato",
+            "volume_cm3": 574.35,
+            "weight_g": 344.62,
+            "calories": 62.03,
+            "protein": 3.45,
+            "fat": 0.69,
+            "carbs": 13.78,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 93,
+            "food_name": "onion",
+            "volume_cm3": 18.97,
+            "weight_g": 11.38,
+            "calories": 4.55,
+            "protein": 0.11,
+            "fat": 0.01,
+            "carbs": 1.02,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ]
+}

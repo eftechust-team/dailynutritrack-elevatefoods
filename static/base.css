@@ -254,7 +254,7 @@ input[type="submit"] {
     cursor: pointer;
     background: linear-gradient(120deg, var(--accent), var(--accent-2));
     color: #1f2937;
-    box-shadow: 0 4px 12px rgba(255, 122, 61, 0.16);
+    box-shadow: none;
 }
 
 .secondary {
@@ -276,6 +276,12 @@ input[type="submit"] {
     border: 1px solid var(--border);
     border-radius: 14px;
     padding: 14px;
+}
+
+.trend-card canvas {
+    display: block;
+    width: 100%;
+    height: clamp(140px, 18vw, 220px);
 }
 
 .metrics {

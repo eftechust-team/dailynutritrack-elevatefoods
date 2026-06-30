@@ -1,0 +1,37 @@
+{
+    "total_volume_cm3": 191.66,
+    "total_weight_g": 115.0,
+    "calories": 60.05,
+    "protein": 0.37,
+    "fat": 0.23,
+    "carbs": 16.1,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 25,
+            "food_name": "apple",
+            "volume_cm3": 183.33,
+            "weight_g": 110.0,
+            "calories": 57.2,
+            "protein": 0.33,
+            "fat": 0.22,
+            "carbs": 15.4,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 32,
+            "food_name": "blueberry",
+            "volume_cm3": 8.33,
+            "weight_g": 5.0,
+            "calories": 2.85,
+            "protein": 0.04,
+            "fat": 0.01,
+            "carbs": 0.7,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ],
+    "analysis_source": "doubao-seed-2-0-mini-260215"
+}

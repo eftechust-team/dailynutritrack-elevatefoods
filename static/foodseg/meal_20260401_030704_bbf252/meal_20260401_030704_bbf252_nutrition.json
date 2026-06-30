@@ -1,0 +1,97 @@
+{
+    "total_volume_cm3": 3089.27,
+    "total_weight_g": 2125.0,
+    "calories": 3363.33,
+    "protein": 129.64,
+    "fat": 147.16,
+    "carbs": 419.8,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 2,
+            "food_name": "tilapia fish soup",
+            "volume_cm3": 885.71,
+            "weight_g": 620.0,
+            "calories": 1032.16,
+            "protein": 41.57,
+            "fat": 47.8,
+            "carbs": 120.1,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 1,
+            "food_name": "braised pork with tofu skin",
+            "volume_cm3": 585.71,
+            "weight_g": 410.0,
+            "calories": 682.56,
+            "protein": 27.49,
+            "fat": 31.61,
+            "carbs": 79.42,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 3,
+            "food_name": "stir-fried bok choy with shrimp",
+            "volume_cm3": 500.0,
+            "weight_g": 350.0,
+            "calories": 582.67,
+            "protein": 23.47,
+            "fat": 26.98,
+            "carbs": 67.8,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 29,
+            "food_name": "banana",
+            "volume_cm3": 375.0,
+            "weight_g": 225.0,
+            "calories": 200.25,
+            "protein": 2.25,
+            "fat": 0.68,
+            "carbs": 51.75,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 4,
+            "food_name": "lychee",
+            "volume_cm3": 285.71,
+            "weight_g": 200.0,
+            "calories": 332.96,
+            "protein": 13.41,
+            "fat": 15.42,
+            "carbs": 38.74,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 6,
+            "food_name": "bayberry",
+            "volume_cm3": 250.0,
+            "weight_g": 175.0,
+            "calories": 291.34,
+            "protein": 11.73,
+            "fat": 13.49,
+            "carbs": 33.9,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 5,
+            "food_name": "mangosteen",
+            "volume_cm3": 207.14,
+            "weight_g": 145.0,
+            "calories": 241.39,
+            "protein": 9.72,
+            "fat": 11.18,
+            "carbs": 28.09,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ],
+    "analysis_source": "doubao-seed-2-0-mini-260215"
+}

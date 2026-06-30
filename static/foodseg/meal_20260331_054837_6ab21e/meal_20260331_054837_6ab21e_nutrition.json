@@ -1,0 +1,24 @@
+{
+    "total_volume_cm3": 1123.16,
+    "total_weight_g": 786.21,
+    "calories": 1308.87,
+    "protein": 52.71,
+    "fat": 60.61,
+    "carbs": 152.3,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 1,
+            "food_name": "mixed_food_1",
+            "volume_cm3": 1123.16,
+            "weight_g": 786.21,
+            "calories": 1308.87,
+            "protein": 52.71,
+            "fat": 60.61,
+            "carbs": 152.3,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ]
+}

@@ -1,0 +1,19 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "bak choi",
+            "weight_g": 341.22,
+            "calories": 116.01,
+            "carbs": 23.89,
+            "protein": 10.24,
+            "fat": 1.36,
+            "bbox": {
+                "x_min": 28,
+                "y_min": 140,
+                "x_max": 647,
+                "y_max": 663
+            }
+        }
+    ]
+}

@@ -1,0 +1,113 @@
+{
+    "image_name": "meal_20260413_073753_737f36",
+    "image_filename": "meal_20260413_073753_737f36.jpg",
+    "image_origin": "/static/uploads/meal_20260413_073753_737f36.jpg",
+    "plate_diameter_cm": 26.0,
+    "food_hints_text": "",
+    "parts": [
+        {
+            "part_id": 1,
+            "suggested_food_name": "tomato",
+            "food_name": "tomato",
+            "bbox": {
+                "x_min": 47,
+                "y_min": 233,
+                "x_max": 642,
+                "y_max": 509
+            },
+            "area_fraction": 0.4264,
+            "cutout_image": "/static/foodseg/meal_20260413_073753_737f36/cutouts/part_1.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        },
+        {
+            "part_id": 2,
+            "suggested_food_name": "tomato",
+            "food_name": "tomato",
+            "bbox": {
+                "x_min": 105,
+                "y_min": 483,
+                "x_max": 594,
+                "y_max": 591
+            },
+            "area_fraction": 0.0884,
+            "cutout_image": "/static/foodseg/meal_20260413_073753_737f36/cutouts/part_2.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        },
+        {
+            "part_id": 3,
+            "suggested_food_name": "tomato",
+            "food_name": "tomato",
+            "bbox": {
+                "x_min": 47,
+                "y_min": 227,
+                "x_max": 327,
+                "y_max": 468
+            },
+            "area_fraction": 0.0647,
+            "cutout_image": "/static/foodseg/meal_20260413_073753_737f36/cutouts/part_3.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        },
+        {
+            "part_id": 4,
+            "suggested_food_name": "tomato",
+            "food_name": "tomato",
+            "bbox": {
+                "x_min": 256,
+                "y_min": 93,
+                "x_max": 444,
+                "y_max": 205
+            },
+            "area_fraction": 0.0599,
+            "cutout_image": "/static/foodseg/meal_20260413_073753_737f36/cutouts/part_4.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        },
+        {
+            "part_id": 5,
+            "suggested_food_name": "onion",
+            "food_name": "onion",
+            "bbox": {
+                "x_min": 47,
+                "y_min": 219,
+                "x_max": 615,
+                "y_max": 306
+            },
+            "area_fraction": 0.0328,
+            "cutout_image": "/static/foodseg/meal_20260413_073753_737f36/cutouts/part_5.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        },
+        {
+            "part_id": 6,
+            "suggested_food_name": "tomato",
+            "food_name": "tomato",
+            "bbox": {
+                "x_min": 478,
+                "y_min": 120,
+                "x_max": 620,
+                "y_max": 220
+            },
+            "area_fraction": 0.0305,
+            "cutout_image": "/static/foodseg/meal_20260413_073753_737f36/cutouts/part_6.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        }
+    ],
+    "visualization_path": "static\\foodseg\\meal_20260413_073753_737f36\\meal_20260413_073753_737f36_labeled_seg.png",
+    "region_map_path": "static\\foodseg\\meal_20260413_073753_737f36\\meal_20260413_073753_737f36_region_map.png"
+}

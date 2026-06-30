@@ -1,0 +1,113 @@
+{
+    "image_name": "meal_20260401_063324_00d74f",
+    "image_filename": "meal_20260401_063324_00d74f.jpg",
+    "image_origin": "/static/uploads/meal_20260401_063324_00d74f.jpg",
+    "plate_diameter_cm": 26.0,
+    "food_hints_text": "",
+    "parts": [
+        {
+            "part_id": 1,
+            "suggested_food_name": "mixed vegetable salad",
+            "food_name": "mixed vegetable salad",
+            "bbox": {
+                "x_min": 215,
+                "y_min": 22,
+                "x_max": 495,
+                "y_max": 231
+            },
+            "area_fraction": 0.2084,
+            "cutout_image": "/static/foodseg/meal_20260401_063324_00d74f/cutouts/part_1.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        },
+        {
+            "part_id": 2,
+            "suggested_food_name": "tomato",
+            "food_name": "tomato",
+            "bbox": {
+                "x_min": 283,
+                "y_min": 25,
+                "x_max": 607,
+                "y_max": 510
+            },
+            "area_fraction": 0.1946,
+            "cutout_image": "/static/foodseg/meal_20260401_063324_00d74f/cutouts/part_2.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        },
+        {
+            "part_id": 3,
+            "suggested_food_name": "tomato",
+            "food_name": "tomato",
+            "bbox": {
+                "x_min": 112,
+                "y_min": 146,
+                "x_max": 259,
+                "y_max": 350
+            },
+            "area_fraction": 0.1175,
+            "cutout_image": "/static/foodseg/meal_20260401_063324_00d74f/cutouts/part_3.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        },
+        {
+            "part_id": 4,
+            "suggested_food_name": "tomato",
+            "food_name": "tomato",
+            "bbox": {
+                "x_min": 272,
+                "y_min": 287,
+                "x_max": 479,
+                "y_max": 438
+            },
+            "area_fraction": 0.0697,
+            "cutout_image": "/static/foodseg/meal_20260401_063324_00d74f/cutouts/part_4.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        },
+        {
+            "part_id": 5,
+            "suggested_food_name": "mixed vegetable salad",
+            "food_name": "mixed vegetable salad",
+            "bbox": {
+                "x_min": 263,
+                "y_min": 234,
+                "x_max": 493,
+                "y_max": 362
+            },
+            "area_fraction": 0.0445,
+            "cutout_image": "/static/foodseg/meal_20260401_063324_00d74f/cutouts/part_5.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        },
+        {
+            "part_id": 6,
+            "suggested_food_name": "tomato",
+            "food_name": "tomato",
+            "bbox": {
+                "x_min": 137,
+                "y_min": 355,
+                "x_max": 334,
+                "y_max": 516
+            },
+            "area_fraction": 0.0434,
+            "cutout_image": "/static/foodseg/meal_20260401_063324_00d74f/cutouts/part_6.png",
+            "container_type": "plate",
+            "container_size_cm": 26.0,
+            "container_depth_cm": 2.0,
+            "fill_ratio": 0.6
+        }
+    ],
+    "visualization_path": "static\\foodseg\\meal_20260401_063324_00d74f\\meal_20260401_063324_00d74f_labeled_seg.png",
+    "region_map_path": "static\\foodseg\\meal_20260401_063324_00d74f\\meal_20260401_063324_00d74f_region_map.png"
+}

@@ -1,0 +1,94 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "tomato",
+            "weight_g": 490.93,
+            "calories": 88.37,
+            "carbs": 19.64,
+            "protein": 4.91,
+            "fat": 0.98,
+            "bbox": {
+                "x_min": 158,
+                "y_min": 100,
+                "x_max": 715,
+                "y_max": 647
+            }
+        },
+        {
+            "id": 2,
+            "food_name": "tomato",
+            "weight_g": 13.15,
+            "calories": 2.37,
+            "carbs": 0.53,
+            "protein": 0.13,
+            "fat": 0.03,
+            "bbox": {
+                "x_min": 197,
+                "y_min": 154,
+                "x_max": 712,
+                "y_max": 542
+            }
+        },
+        {
+            "id": 3,
+            "food_name": "mixed vegetable salad",
+            "weight_g": 9.14,
+            "calories": 14.74,
+            "carbs": 1.7,
+            "protein": 0.6,
+            "fat": 0.68,
+            "bbox": {
+                "x_min": 140,
+                "y_min": 177,
+                "x_max": 193,
+                "y_max": 443
+            }
+        },
+        {
+            "id": 4,
+            "food_name": "mixed vegetable salad",
+            "weight_g": 7.53,
+            "calories": 12.14,
+            "carbs": 1.4,
+            "protein": 0.5,
+            "fat": 0.56,
+            "bbox": {
+                "x_min": 196,
+                "y_min": 496,
+                "x_max": 370,
+                "y_max": 624
+            }
+        },
+        {
+            "id": 5,
+            "food_name": "mixed vegetable salad",
+            "weight_g": 7.28,
+            "calories": 11.75,
+            "carbs": 1.36,
+            "protein": 0.48,
+            "fat": 0.55,
+            "bbox": {
+                "x_min": 250,
+                "y_min": 61,
+                "x_max": 448,
+                "y_max": 134
+            }
+        },
+        {
+            "id": 6,
+            "food_name": "tomato",
+            "weight_g": 5.31,
+            "calories": 0.96,
+            "carbs": 0.21,
+            "protein": 0.05,
+            "fat": 0.01,
+            "bbox": {
+                "x_min": 552,
+                "y_min": 529,
+                "x_max": 685,
+                "y_max": 611
+            }
+        }
+    ]
+}

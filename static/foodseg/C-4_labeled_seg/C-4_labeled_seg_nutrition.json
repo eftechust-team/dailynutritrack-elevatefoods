@@ -1,0 +1,36 @@
+{
+    "total_volume_cm3": 883.2,
+    "total_weight_g": 533.34,
+    "calories": 130.33,
+    "protein": 6.67,
+    "fat": 2.81,
+    "carbs": 24.84,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 73,
+            "food_name": "tomato",
+            "volume_cm3": 848.97,
+            "weight_g": 509.39,
+            "calories": 91.7,
+            "protein": 5.09,
+            "fat": 1.02,
+            "carbs": 20.38,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 3,
+            "food_name": "mixed vegetable salad",
+            "volume_cm3": 34.23,
+            "weight_g": 23.95,
+            "calories": 38.63,
+            "protein": 1.58,
+            "fat": 1.79,
+            "carbs": 4.46,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ]
+}

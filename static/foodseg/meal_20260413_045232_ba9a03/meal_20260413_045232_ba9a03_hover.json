@@ -1,0 +1,72 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "wheat noodle",
+            "weight_g": 140.0,
+            "calories": 233.07,
+            "carbs": 27.12,
+            "protein": 9.39,
+            "fat": 10.79,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 449,
+                "y_max": 299
+            },
+            "confidence": 0.94
+        },
+        {
+            "id": 2,
+            "food_name": "braised beef",
+            "weight_g": 75.0,
+            "calories": 124.86,
+            "carbs": 14.53,
+            "protein": 5.03,
+            "fat": 5.78,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 449,
+                "y_max": 299
+            },
+            "confidence": 0.97
+        },
+        {
+            "id": 3,
+            "food_name": "bok choy",
+            "weight_g": 45.0,
+            "calories": 74.92,
+            "carbs": 8.72,
+            "protein": 3.02,
+            "fat": 3.47,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 449,
+                "y_max": 299
+            },
+            "confidence": 0.92
+        },
+        {
+            "id": 4,
+            "food_name": "pineapple juice",
+            "weight_g": 250.0,
+            "calories": 416.19,
+            "carbs": 48.43,
+            "protein": 16.76,
+            "fat": 19.27,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 449,
+                "y_max": 299
+            },
+            "confidence": 0.91
+        }
+    ]
+}

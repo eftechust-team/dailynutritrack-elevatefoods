@@ -1,0 +1,37 @@
+{
+    "total_volume_cm3": 277.27,
+    "total_weight_g": 230.0,
+    "calories": 195.8,
+    "protein": 37.14,
+    "fat": 3.02,
+    "carbs": 7.14,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 48,
+            "food_name": "chicken breast",
+            "volume_cm3": 127.27,
+            "weight_g": 140.0,
+            "calories": 165.2,
+            "protein": 34.44,
+            "fat": 2.66,
+            "carbs": 0.84,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 87,
+            "food_name": "broccoli",
+            "volume_cm3": 150.0,
+            "weight_g": 90.0,
+            "calories": 30.6,
+            "protein": 2.7,
+            "fat": 0.36,
+            "carbs": 6.3,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ],
+    "analysis_source": "doubao-seed-2-0-mini-260215"
+}

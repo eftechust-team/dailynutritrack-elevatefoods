@@ -1,0 +1,19 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "tofu",
+            "weight_g": 841.18,
+            "calories": 639.3,
+            "carbs": 16.82,
+            "protein": 67.29,
+            "fat": 42.06,
+            "bbox": {
+                "x_min": 708,
+                "y_min": 450,
+                "x_max": 3208,
+                "y_max": 2902
+            }
+        }
+    ]
+}

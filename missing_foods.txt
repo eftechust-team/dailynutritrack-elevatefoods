@@ -17,3 +17,14 @@
 [2026-03-12 08:13:48 UTC] food='bak choi' | qty=100g | source=USDA API | carbs=3.51g protein=1.02g fat=0.23g calories=17.0kcal
 [2026-03-12 08:15:35 UTC] food='bak choy' | qty=100.0g | source=USDA API | carbs=3.51g protein=1.02g fat=0.23g calories=17.0kcal
 [2026-03-13 09:30:28 UTC] food='100g' | qty=1.0unit | source=USDA API | carbs=0.0g protein=15.0g fat=69.0g calories=681.0kcal
+[2026-04-10 06:41:27 UTC] food='chicken breast 12-g' | qty=1.0unit | source=USDA API | carbs=0.0g protein=42.0g fat=0.73g calories=216.0kcal
+[2026-04-10 06:41:33 UTC] food='chicken breast 120g' | qty=1.0unit | source=USDA API | carbs=0.0g protein=42.0g fat=0.73g calories=216.0kcal
+[2026-04-10 06:41:43 UTC] food='chicken breast 120g' | qty=1.0unit | source=USDA API | carbs=0.0g protein=42.0g fat=0.73g calories=216.0kcal
+[2026-04-13 02:45:59 UTC] food='soil milk' | qty=180.0g | source=USDA API | carbs=5.26g protein=0.38g fat=0.0g calories=55.8kcal
+[2026-04-13 02:50:07 UTC] food='soymilk' | qty=180.0g | source=USDA API | carbs=5.26g protein=5.26g fat=0.0g calories=75.6kcal
+[2026-04-13 02:55:57 UTC] food='soymilk' | qty=180.0g | source=USDA API | carbs=5.26g protein=5.26g fat=0.0g calories=75.6kcal
+[2026-04-13 03:05:52 UTC] food='soymilk' | qty=180.0ml | source=USDA API | carbs=5.26g protein=5.26g fat=0.0g calories=75.6kcal
+[2026-04-13 03:15:57 UTC] food='brocolli' | qty=100g | source=USDA API | carbs=5.56g protein=1.11g fat=0.0g calories=33.0kcal
+[2026-04-13 03:15:59 UTC] food='brocolli' | qty=100g | source=USDA API | carbs=5.56g protein=1.11g fat=0.0g calories=33.0kcal
+[2026-04-13 05:53:23 UTC] food='soymilk' | qty=180.0ml | source=USDA API | carbs=5.26g protein=5.26g fat=0.0g calories=75.6kcal
+[2026-04-13 05:53:51 UTC] food='soymilk' | qty=180.0ml | source=USDA API | carbs=5.26g protein=5.26g fat=0.0g calories=75.6kcal

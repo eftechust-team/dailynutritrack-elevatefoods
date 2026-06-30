@@ -1,0 +1,36 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "broccoli",
+            "weight_g": 293.9,
+            "calories": 99.93,
+            "carbs": 20.57,
+            "protein": 8.82,
+            "fat": 1.18,
+            "bbox": {
+                "x_min": 87,
+                "y_min": 12,
+                "x_max": 352,
+                "y_max": 287
+            },
+            "volume_cm3": 489.83,
+            "food_id": 87
+        },
+        {
+            "id": 2,
+            "food_name": "mixed vegetable salad",
+            "weight_g": 210.94,
+            "calories": 351.17,
+            "carbs": 40.86,
+            "protein": 14.14,
+            "fat": 16.26,
+            "bbox": {
+                "x_min": 204,
+                "y_min": 94,
+                "x_max": 362,
+                "y_max": 253
+            }
+        }
+    ]
+}

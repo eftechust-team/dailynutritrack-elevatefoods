@@ -3,6 +3,7 @@ from google.cloud import storage
 from google.auth.exceptions import DefaultCredentialsError
 import numpy as np
 from scipy.optimize import minimize, NonlinearConstraint, nnls, linprog
+from scipy import ndimage as ndi
 from itertools import combinations
 import os
 import json
@@ -18,11 +19,24 @@ import html as _html
 import xml.etree.ElementTree as ET
 from datetime import datetime
 import json as json_lib
+from werkzeug.utils import secure_filename
+import base64
+try:
+    from anthropic import Anthropic
+except Exception:
+    Anthropic = None
 
 # export GOOGLE_APPLICATION_CREDENTIALS="food-ai-455507-e2a9c115814e.json"     
 json_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "food-ai-455507-e2a9c115814e.json"))
 if os.path.exists(json_path):
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = json_path
+
+# Initialize Claude client for vision-based food classification
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+if ANTHROPIC_API_KEY and Anthropic is not None:
+    claude_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+else:
+    claude_client = None
 
 # Diagnostics toggle (optional): set env DIAG_MODE=1 to include server-side errors in API responses
 DIAG_MODE = os.getenv("DIAG_MODE", "0") not in ["0", "false", "False", ""]
@@ -42,6 +56,50 @@ MESH_STORAGE = os.getenv("MESH_STORAGE", "gcs").strip().lower()
 def _user_records_path():
     return os.path.join(tempfile.gettempdir(), "user_records.json")
 
+
+def _generate_short_user_id(existing_records=None):
+    """Generate a short unique user id like usr_a1b2c3d4."""
+    records = existing_records or {}
+    while True:
+        candidate = f"usr_{uuid.uuid4().hex[:8]}"
+        if candidate not in records:
+            return candidate
+
+
+def _is_long_legacy_user_id(user_id):
+    """Treat legacy UUID-like IDs and very long IDs as candidates for shortening."""
+    sid = str(user_id or '').strip()
+    if not sid:
+        return False
+    if re.fullmatch(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', sid):
+        return True
+    return len(sid) > 16
+
+
+def _normalize_user_record_ids(records):
+    """Return records keyed by short IDs, migrating legacy long IDs as needed."""
+    if not isinstance(records, dict):
+        return {}, False
+
+    normalized = {}
+    changed = False
+
+    for key, raw_record in records.items():
+        record = raw_record if isinstance(raw_record, dict) else {}
+        stored_id = str(record.get('user_id') or key or '').strip()
+        target_id = stored_id
+
+        if not target_id or _is_long_legacy_user_id(target_id) or target_id in normalized:
+            target_id = _generate_short_user_id(normalized)
+            changed = True
+        elif key != target_id:
+            changed = True
+
+        record['user_id'] = target_id
+        normalized[target_id] = record
+
+    return normalized, changed
+
 def _load_user_records():
     try:
         path = _user_records_path()
@@ -49,7 +107,10 @@ def _load_user_records():
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    return data
+                    normalized, changed = _normalize_user_record_ids(data)
+                    if changed:
+                        _save_user_records(normalized)
+                    return normalized
     except Exception as e:
         print(f"[WARN] Failed to load user records: {e}")
     return {}
@@ -68,7 +129,7 @@ def save_user_record(user_id, user_info, daily_nutrition=None, recommendation=No
     now = datetime.utcnow().isoformat() + "Z"
 
     if not user_id:
-        user_id = str(uuid.uuid4())
+        user_id = _generate_short_user_id(records)
 
     existing = records.get(user_id, {
         'user_id': user_id,
@@ -121,6 +182,901 @@ def _save_manifest(manifest):
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = "./static/uploads"
 bucket_name = "food-ai"
+
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".jfif", ".bmp", ".tif", ".tiff"}
+DEFAULT_PLATE_DIAMETER_CM = 26.0
+
+
+def _foodseg_output_dir_from_image_name(image_name):
+    base_name = os.path.splitext(os.path.basename(str(image_name or '')))[0]
+    return os.path.join('static', 'foodseg', base_name)
+
+
+def _parts_metadata_path(image_name):
+    base_name = os.path.splitext(os.path.basename(str(image_name or '')))[0]
+    return os.path.join(_foodseg_output_dir_from_image_name(image_name), f'{base_name}_parts.json')
+
+
+def _load_parts_metadata(image_name):
+    path = _parts_metadata_path(image_name)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[WARN] Failed to load parts metadata: {e}")
+        return None
+
+
+def _save_parts_metadata(image_name, payload):
+    try:
+        out_dir = _foodseg_output_dir_from_image_name(image_name)
+        os.makedirs(out_dir, exist_ok=True)
+        with open(_parts_metadata_path(image_name), 'w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=True, indent=4)
+    except Exception as e:
+        print(f"[WARN] Failed to save parts metadata: {e}")
+
+
+def _build_part_context_text(part_contexts):
+    if not part_contexts:
+        return ''
+
+    lines = []
+    for part in part_contexts:
+        if not isinstance(part, dict):
+            continue
+        part_id = int(_safe_float(part.get('part_id', 0), 0))
+        food_name = str(part.get('food_name', '') or '').strip() or 'unknown food'
+        container_type = str(part.get('container_type', '') or '').strip() or 'unknown container'
+        size_cm = round(_safe_float(part.get('container_size_cm', 0.0), 0.0), 2)
+        depth_cm = round(_safe_float(part.get('container_depth_cm', 0.0), 0.0), 2)
+        fill_ratio = round(_safe_float(part.get('fill_ratio', 0.0), 0.0), 2)
+        lines.append(
+            f"part_id={part_id}; food={food_name}; container={container_type}; size_cm={size_cm}; depth_cm={depth_cm}; fill_ratio={fill_ratio}"
+        )
+
+    if not lines:
+        return ''
+    return 'User-provided per-food-part container sizing context:\n' + '\n'.join(lines)
+
+
+def _allowed_image_filename(filename):
+    ext = os.path.splitext(str(filename or ''))[1].lower()
+    return ext in ALLOWED_IMAGE_EXTENSIONS
+
+
+def _uploaded_image_extension(file, filename=''):
+    """Return a safe image extension for saving an uploaded image."""
+    ext = os.path.splitext(str(filename or ''))[1].lower()
+    if ext in ALLOWED_IMAGE_EXTENSIONS:
+        return ext
+
+    mimetype = str(getattr(file, 'mimetype', '') or '').lower()
+    mimetype_map = {
+        'image/jpeg': '.jpg',
+        'image/jpg': '.jpg',
+        'image/png': '.png',
+        'image/webp': '.webp',
+        'image/bmp': '.bmp',
+        'image/tiff': '.tiff',
+        'image/x-tiff': '.tiff',
+        'image/jfif': '.jfif',
+    }
+    if mimetype in mimetype_map:
+        return mimetype_map[mimetype]
+    return ''
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _split_food_hints(raw):
+    return [x.strip() for x in re.split(r'[,，;]+', str(raw or '')) if x.strip()]
+
+
+def _simplify_food_name(raw_name):
+    """Strip cooking styles/details and keep a concise food label for lookup/display."""
+    name = str(raw_name or '').strip().lower()
+    if not name:
+        return ''
+
+    # Remove parenthetical notes and punctuation-like separators.
+    name = re.sub(r'\([^)]*\)', ' ', name)
+    name = re.sub(r'[,/|]+', ' ', name)
+    name = name.replace('&', ' and ')
+
+    style_words = {
+        'fried', 'stir', 'stirred', 'stir-fried', 'braised', 'grilled', 'roasted',
+        'steamed', 'boiled', 'sauteed', 'sautéed', 'baked', 'deep', 'pan', 'seared',
+        'spicy', 'sweet', 'sour', 'savory', 'smoked', 'pickled', 'marinated',
+        'glazed', 'seasoned', 'crispy', 'crunchy', 'style', 'banchan', 'with',
+        'sauce', 'soup', 'stew', 'curry', 'hotpot', 'noodle-soup'
+    }
+    stop_words = {'the', 'a', 'an', 'of'}
+
+    tokens = [t for t in re.split(r'\s+', name) if t]
+    cleaned = [t for t in tokens if t not in style_words and t not in stop_words]
+    if not cleaned:
+        cleaned = tokens
+
+    simple = ' '.join(cleaned).strip()
+    simple = re.sub(r'\s+', ' ', simple)
+    return simple
+
+
+def _csv_row_first_match(food_name):
+    if not food_name:
+        return None
+    found = search_csv_food(food_name)
+    if not found:
+        return None
+    foods = found.get('foods') or []
+    if not foods:
+        return None
+    return foods[0].get('_csv_data')
+
+
+def _food_profile_from_name(food_name, default_profile=None):
+    """Resolve a food to per-gram profile with fallback priority: CSV -> USDA -> Doubao."""
+    normalized_name = _simplify_food_name(food_name) or (food_name or '')
+    row = _csv_row_first_match(normalized_name) or _csv_row_first_match(food_name)
+    if row:
+        return {
+            'found': True,
+            'food_name': row.get('category_name', normalized_name or food_name or 'unknown food'),
+            'food_id': int(_safe_float(row.get('category_id', 0), 0)),
+            'density': _csv_float_value(row, 'density', default=(default_profile or {}).get('density', 0.95)),
+            'calories_pg': _csv_float_value(row, 'calories', default=(default_profile or {}).get('calories_pg', 1.2)),
+            'protein_pg': _csv_float_value(row, 'protein', default=(default_profile or {}).get('protein_pg', 0.04)),
+            'carbs_pg': _csv_float_value(row, 'carbohydrates', default=(default_profile or {}).get('carbs_pg', 0.13)),
+            'fat_pg': _csv_float_value(row, 'fat', default=(default_profile or {}).get('fat_pg', 0.04)),
+        }
+
+    # Fallback to USDA -> Doubao through existing resolver when CSV has no match.
+    fallback_nutrition, fallback_source = None, ''
+    try:
+        fallback_nutrition, fallback_source = get_food_nutrition_with_fallback(normalized_name or food_name, 100, 'g')
+    except Exception as fallback_err:
+        print(f"[WARN] Profile fallback lookup failed for '{normalized_name or food_name}': {fallback_err}")
+
+    if fallback_nutrition and fallback_source:
+        dp = default_profile or {
+            'density': 0.95,
+            'calories_pg': 1.2,
+            'protein_pg': 0.04,
+            'carbs_pg': 0.13,
+            'fat_pg': 0.04,
+        }
+        return {
+            'found': True,
+            'food_name': str(fallback_nutrition.get('food_name', normalized_name or food_name or 'unknown food') or 'unknown food'),
+            'food_id': 0,
+            'density': dp['density'],
+            'calories_pg': float(fallback_nutrition.get('calories', 0) or 0) / 100.0,
+            'protein_pg': float(fallback_nutrition.get('protein', 0) or 0) / 100.0,
+            'carbs_pg': float(fallback_nutrition.get('carbs', 0) or 0) / 100.0,
+            'fat_pg': float(fallback_nutrition.get('fat', 0) or 0) / 100.0,
+        }
+
+    # Fallback profile for unknown names.
+    dp = default_profile or {
+        'density': 0.95,
+        'calories_pg': 1.2,
+        'protein_pg': 0.04,
+        'carbs_pg': 0.13,
+        'fat_pg': 0.04,
+    }
+    return {
+        'found': False,
+        'food_name': (normalized_name or food_name or 'unknown food').strip() or 'unknown food',
+        'food_id': 0,
+        'density': dp['density'],
+        'calories_pg': dp['calories_pg'],
+        'protein_pg': dp['protein_pg'],
+        'carbs_pg': dp['carbs_pg'],
+        'fat_pg': dp['fat_pg'],
+    }
+
+
+def _csv_float_value(row, *keys, default=0.0):
+    for key in keys:
+        raw = str((row or {}).get(key, '') or '').strip()
+        if not raw:
+            continue
+        try:
+            return float(raw)
+        except Exception:
+            continue
+    return default
+
+
+def _default_food_profile():
+    ensure_nutrition_csv_fresh()
+    if not csv_data:
+        return {
+            'density': 0.95,
+            'calories_pg': 1.2,
+            'protein_pg': 0.04,
+            'carbs_pg': 0.13,
+            'fat_pg': 0.04,
+        }
+
+    dense_vals = []
+    cals = []
+    proteins = []
+    carbs = []
+    fats = []
+    for row in csv_data:
+        cname = normalize_food_name(row.get('category_name', ''))
+        if cname == 'background':
+            continue
+        d = _csv_float_value(row, 'density', default=0.0)
+        if d > 0:
+            dense_vals.append(d)
+        cals.append(_csv_float_value(row, 'calories', default=0.0))
+        proteins.append(_csv_float_value(row, 'protein', default=0.0))
+        carbs.append(_csv_float_value(row, 'carbohydrates', default=0.0))
+        fats.append(_csv_float_value(row, 'fat', default=0.0))
+
+    return {
+        'density': float(np.median(dense_vals)) if dense_vals else 0.95,
+        'calories_pg': float(np.mean(cals)) if cals else 1.2,
+        'protein_pg': float(np.mean(proteins)) if proteins else 0.04,
+        'carbs_pg': float(np.mean(carbs)) if carbs else 0.13,
+        'fat_pg': float(np.mean(fats)) if fats else 0.04,
+    }
+
+
+def _estimate_segment_thickness_cm(area_fraction, food_name=''):
+    # Heuristic range for food pile height on a standard plate.
+    base = 0.8 + 1.6 * np.sqrt(max(0.0, min(1.0, float(area_fraction))))
+    lname = normalize_food_name(food_name)
+    if any(k in lname for k in ['soup', 'sauce', 'yogurt', 'milk', 'juice']):
+        base *= 0.75
+    if any(k in lname for k in ['steak', 'chicken', 'tofu', 'salmon', 'meat']):
+        base *= 1.15
+    return float(np.clip(base, 0.5, 2.8))
+
+
+def _infer_food_name_from_region(region_rgb):
+    """Classify food name from a region image using Claude Vision AI."""
+    
+    # Fallback to heuristic if no Claude client
+    if not claude_client or not ANTHROPIC_API_KEY:
+        return _infer_food_name_from_region_heuristic(region_rgb)
+    
+    try:
+        from PIL import Image
+        import io
+        
+        # Convert numpy array to PIL Image
+        if isinstance(region_rgb, np.ndarray):
+            # Ensure we have a 2D or 3D array of reasonable size
+            if region_rgb.ndim == 1:
+                region_rgb = region_rgb.reshape(-1, 3)
+            if region_rgb.shape[1] != 3:
+                return _infer_food_name_from_region_heuristic(region_rgb)
+            
+            # Create a small representative image (100x100 max)
+            h = min(100, max(10, len(region_rgb) // 10))
+            w = min(100, max(10, len(region_rgb) // 10))
+            
+            # Tile or reshape the RGB data into an image
+            region_array = np.tile(region_rgb.reshape(-1, 3), (h*w // len(region_rgb) + 1, 1))[:h*w]
+            region_array = region_array.reshape(h, w, 3).astype(np.uint8)
+            img = Image.fromarray(region_array, 'RGB')
+        else:
+            return _infer_food_name_from_region_heuristic(region_rgb)
+        
+        # Convert to base64
+        img_byte_arr = io.BytesIO()
+        img.save(img_byte_arr, format='JPEG')
+        img_byte_arr.seek(0)
+        img_b64 = base64.standard_b64encode(img_byte_arr.read()).decode('utf-8')
+        
+        # Query Claude Vision
+        message = claude_client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=50,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": img_b64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "This is a food item on a plate. Identify the specific food in ONE or TWO words only. Be concise. Return only the food name, nothing else. Examples: 'broccoli', 'grilled chicken', 'rice', 'tomato salad'."
+                        }
+                    ],
+                }
+            ],
+        )
+        
+        food_name = message.content[0].text.strip().lower()
+        
+        # Clean up the response - remove punctuation and take first item if multiple
+        food_name = re.sub(r'[^\w\s]', '', food_name).strip()
+        if ' ' in food_name:
+            food_name = food_name.split()[0]
+        
+        if food_name and len(food_name) > 1:
+            print(f"[Claude Vision] Classified food region as: {food_name}")
+            return food_name
+        
+    except Exception as e:
+        print(f"[Claude Vision] Error: {e}, falling back to heuristic")
+    
+    # Fallback to heuristic
+    return _infer_food_name_from_region_heuristic(region_rgb)
+
+
+def _infer_food_name_from_region_heuristic(region_rgb):
+    """Heuristic vegetable inference from region color statistics (fallback)."""
+    if region_rgb is None or len(region_rgb) == 0:
+        return 'mixed vegetable salad'
+
+    mean_rgb = np.mean(region_rgb.astype(np.float32), axis=0)
+    r, g, b = float(mean_rgb[0]), float(mean_rgb[1]), float(mean_rgb[2])
+
+    # Strong color priors for common salad ingredients.
+    if r > g * 1.18 and r > b * 1.18:
+        return 'tomato'
+    if g > r * 1.15 and g > b * 1.10:
+        if g < 95 or (r < 90 and b < 90):
+            return 'broccoli'
+        if b > 95 and r > 90:
+            return 'cucumber'
+        return 'lettuce'
+    if r > 160 and g > 115 and b < 120:
+        return 'carrot'
+    if r > 170 and g > 170 and b < 145:
+        return 'corn'
+    if b > 120 and r > 100 and (b - g) > 12:
+        return 'red cabbage'
+    if r > 180 and g > 170 and b > 150:
+        return 'onion'
+    return 'mixed vegetable salad'
+
+
+def _aggregate_food_items(items):
+    """Merge repeated food names and sum their nutrition/weight."""
+    grouped = {}
+    for it in items:
+        name = str(it.get('food_name', 'mixed vegetable salad') or 'mixed vegetable salad')
+        if name not in grouped:
+            grouped[name] = {
+                'food_id': it.get('food_id', 0),
+                'food_name': name,
+                'volume_cm3': 0.0,
+                'weight_g': 0.0,
+                'calories': 0.0,
+                'protein': 0.0,
+                'fat': 0.0,
+                'carbs': 0.0,
+                'fiber': 0.0,
+                'sugars': 0.0,
+            }
+
+        for key in ['volume_cm3', 'weight_g', 'calories', 'protein', 'fat', 'carbs', 'fiber', 'sugars']:
+            grouped[name][key] += float(it.get(key, 0) or 0)
+
+    out = []
+    for _, v in grouped.items():
+        out.append({
+            'food_id': int(v['food_id']),
+            'food_name': v['food_name'],
+            'volume_cm3': round(v['volume_cm3'], 2),
+            'weight_g': round(v['weight_g'], 2),
+            'calories': round(v['calories'], 2),
+            'protein': round(v['protein'], 2),
+            'fat': round(v['fat'], 2),
+            'carbs': round(v['carbs'], 2),
+            'fiber': round(v['fiber'], 2),
+            'sugars': round(v['sugars'], 2),
+        })
+
+    out.sort(key=lambda x: x.get('weight_g', 0), reverse=True)
+    return out
+
+
+def prepare_image_parts_for_sizing(image_path, food_hints_text='', plate_diameter_cm=DEFAULT_PLATE_DIAMETER_CM):
+    """Prepare segmented food-part cutouts and metadata before nutrition estimation."""
+    ensure_nutrition_csv_fresh()
+
+    try:
+        from PIL import Image
+    except Exception as e:
+        raise RuntimeError(f'Pillow is required for image analysis: {e}')
+
+    try:
+        img = Image.open(image_path).convert('RGB')
+    except Exception as e:
+        raise ValueError(
+            'Could not decode this image format. Please upload JPG, PNG, WEBP, BMP, or TIFF. '
+            'If this is HEIC/HEIF from iPhone, convert to JPG first.'
+        ) from e
+
+    rgb = np.array(img)
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError('Uploaded image must be RGB.')
+
+    h, w = rgb.shape[:2]
+    if h < 64 or w < 64:
+        raise ValueError('Image is too small for analysis.')
+
+    yy, xx = np.ogrid[:h, :w]
+    cx = (w - 1) / 2.0
+    cy = (h - 1) / 2.0
+    plate_radius_px = min(h, w) * 0.46
+    plate_mask = ((xx - cx) ** 2 + (yy - cy) ** 2) <= (plate_radius_px ** 2)
+
+    rgb_f = rgb.astype(np.float32)
+    vmax = np.max(rgb_f, axis=2)
+    vmin = np.min(rgb_f, axis=2)
+    sat = np.where(vmax > 0, (vmax - vmin) / np.maximum(vmax, 1.0), 0.0) * 255.0
+
+    plate_brightness = float(np.median(vmax[plate_mask]))
+    food_mask = plate_mask & (vmax > 18) & (
+        (sat > 24) |
+        (vmax < (plate_brightness - 12))
+    )
+    food_mask = ndi.binary_opening(food_mask, structure=np.ones((3, 3), dtype=bool))
+    food_mask = ndi.binary_closing(food_mask, structure=np.ones((5, 5), dtype=bool))
+
+    hints = _split_food_hints(food_hints_text)
+
+    labels, count = ndi.label(food_mask)
+    plate_pixels = int(np.sum(plate_mask))
+    min_pixels = max(250, int(plate_pixels * 0.01))
+    components = []
+    for label_id in range(1, count + 1):
+        area_px = int(np.sum(labels == label_id))
+        if area_px < min_pixels:
+            continue
+        components.append((label_id, area_px))
+    components.sort(key=lambda x: x[1], reverse=True)
+
+    if not components and np.any(food_mask):
+        components = [(1, int(np.sum(food_mask)))]
+        labels = np.where(food_mask, 1, 0).astype(np.int32)
+
+    if len(components) == 1 and not hints:
+        main_id = components[0][0]
+        main_mask = labels == main_id
+        r = rgb_f[:, :, 0]
+        g = rgb_f[:, :, 1]
+        b = rgb_f[:, :, 2]
+
+        color_masks = [
+            main_mask & (r > g * 1.12) & (r > b * 1.12),
+            main_mask & (g > r * 1.10) & (g > b * 1.06),
+            main_mask & (r > 165) & (g > 120) & (b < 130),
+            main_mask & (r > 175) & (g > 165) & (b > 145),
+        ]
+
+        split_labels = np.zeros_like(labels, dtype=np.int32)
+        split_components = []
+        next_id = 1
+        for cm in color_masks:
+            if np.sum(cm) < min_pixels:
+                continue
+            cm_labels, cm_count = ndi.label(cm)
+            for cid in range(1, cm_count + 1):
+                seg = cm_labels == cid
+                area_px = int(np.sum(seg))
+                if area_px < min_pixels:
+                    continue
+                split_labels[seg] = next_id
+                split_components.append((next_id, area_px))
+                next_id += 1
+
+        remain = main_mask & (split_labels == 0)
+        if np.sum(remain) >= min_pixels:
+            rm_labels, rm_count = ndi.label(remain)
+            for rid in range(1, rm_count + 1):
+                seg = rm_labels == rid
+                area_px = int(np.sum(seg))
+                if area_px < min_pixels:
+                    continue
+                split_labels[seg] = next_id
+                split_components.append((next_id, area_px))
+                next_id += 1
+
+        if len(split_components) >= 2:
+            labels = split_labels
+            components = sorted(split_components, key=lambda x: x[1], reverse=True)
+
+    components = components[:6]
+    if not components:
+        labels = np.where(plate_mask, 1, 0).astype(np.int32)
+        components = [(1, int(np.sum(plate_mask)))]
+
+    vis = rgb.copy()
+    region_colors = [
+        np.array([230, 92, 47], dtype=np.uint8),
+        np.array([240, 168, 53], dtype=np.uint8),
+        np.array([76, 175, 80], dtype=np.uint8),
+        np.array([40, 145, 200], dtype=np.uint8),
+        np.array([170, 95, 220], dtype=np.uint8),
+        np.array([220, 70, 130], dtype=np.uint8),
+    ]
+    region_map = np.zeros((h, w), dtype=np.uint8)
+
+    image_filename = os.path.basename(image_path)
+    base_name = os.path.splitext(image_filename)[0]
+    output_dir = os.path.join('static', 'foodseg', base_name)
+    cutout_dir = os.path.join(output_dir, 'cutouts')
+    os.makedirs(cutout_dir, exist_ok=True)
+
+    parts = []
+    for idx, (label_id, area_px) in enumerate(components):
+        region_mask = labels == label_id
+        if not np.any(region_mask):
+            continue
+
+        region_rgb = rgb[region_mask]
+        hint_name = hints[idx] if idx < len(hints) else ''
+        suggested_name = hint_name or _infer_food_name_from_region(region_rgb)
+
+        ys, xs = np.where(region_mask)
+        x_min, x_max = int(np.min(xs)), int(np.max(xs))
+        y_min, y_max = int(np.min(ys)), int(np.max(ys))
+
+        crop_rgb = rgb[y_min:y_max + 1, x_min:x_max + 1]
+        crop_mask = region_mask[y_min:y_max + 1, x_min:x_max + 1]
+        rgba = np.zeros((crop_rgb.shape[0], crop_rgb.shape[1], 4), dtype=np.uint8)
+        rgba[:, :, :3] = crop_rgb
+        rgba[:, :, 3] = np.where(crop_mask, 255, 0).astype(np.uint8)
+
+        part_id = idx + 1
+        cutout_name = f'part_{part_id}.png'
+        cutout_disk = os.path.join(cutout_dir, cutout_name)
+        Image.fromarray(rgba, mode='RGBA').save(cutout_disk)
+
+        color = region_colors[idx % len(region_colors)]
+        vis[region_mask] = (0.45 * vis[region_mask] + 0.55 * color).astype(np.uint8)
+        region_map[region_mask] = part_id
+
+        parts.append({
+            'part_id': part_id,
+            'suggested_food_name': suggested_name,
+            'food_name': suggested_name,
+            'bbox': {
+                'x_min': x_min,
+                'y_min': y_min,
+                'x_max': x_max,
+                'y_max': y_max,
+            },
+            'area_fraction': round(float(area_px) / float(max(plate_pixels, 1)), 4),
+            'cutout_image': f'/static/foodseg/{base_name}/cutouts/{cutout_name}',
+            'container_type': 'plate',
+            'container_size_cm': round(float(plate_diameter_cm), 2),
+            'container_depth_cm': 2.0,
+            'fill_ratio': 0.6,
+        })
+
+    vis_path = os.path.join(output_dir, f'{base_name}_labeled_seg.png')
+    Image.fromarray(vis).save(vis_path)
+
+    region_map_path = os.path.join(output_dir, f'{base_name}_region_map.png')
+    Image.fromarray(region_map, mode='L').save(region_map_path)
+
+    payload = {
+        'image_name': base_name,
+        'image_filename': image_filename,
+        'image_origin': f'/static/uploads/{image_filename}',
+        'plate_diameter_cm': round(float(plate_diameter_cm), 2),
+        'food_hints_text': str(food_hints_text or ''),
+        'parts': parts,
+        'visualization_path': vis_path,
+        'region_map_path': region_map_path,
+    }
+    _save_parts_metadata(image_filename, payload)
+    return payload
+
+
+def analyze_uploaded_meal_image(image_path, food_hints_text='', plate_diameter_cm=DEFAULT_PLATE_DIAMETER_CM, part_contexts=None):
+    """Estimate food masses and nutrition from a top-down meal image on a standard plate."""
+    ensure_nutrition_csv_fresh()
+
+    try:
+        from PIL import Image
+    except Exception as e:
+        raise RuntimeError(f'Pillow is required for image analysis: {e}')
+
+    try:
+        img = Image.open(image_path).convert('RGB')
+    except Exception as e:
+        raise ValueError(
+            'Could not decode this image format. Please upload JPG, PNG, WEBP, BMP, or TIFF. '
+            'If this is HEIC/HEIF from iPhone, convert to JPG first.'
+        ) from e
+
+    # Normalize very large images to keep analysis stable and responsive.
+    # Many phone photos are 3000-5000px wide and can slow or break segmentation.
+    max_side = max(img.size)
+    if max_side > 900:
+        scale = 900.0 / float(max_side)
+        new_size = (
+            max(1, int(round(img.size[0] * scale))),
+            max(1, int(round(img.size[1] * scale))),
+        )
+        try:
+            resample = Image.Resampling.LANCZOS
+        except Exception:
+            resample = Image.LANCZOS
+        img = img.resize(new_size, resample)
+
+    rgb = np.array(img)
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError('Uploaded image must be RGB.')
+
+    # Prefer Doubao vision for direct food + mass estimation; fallback to segmentation heuristic.
+    try:
+        doubao_result = _build_doubao_meal_analysis(
+            image_path=image_path,
+            rgb=rgb,
+            food_hints_text=food_hints_text,
+            part_contexts=part_contexts,
+        )
+        if doubao_result:
+            return doubao_result
+    except Exception as e:
+        print(f"[WARN] Doubao image analysis failed, fallback to heuristic: {e}")
+
+    h, w = rgb.shape[:2]
+    if h < 64 or w < 64:
+        raise ValueError('Image is too small for analysis.')
+
+    yy, xx = np.ogrid[:h, :w]
+    cx = (w - 1) / 2.0
+    cy = (h - 1) / 2.0
+    plate_radius_px = min(h, w) * 0.46
+    plate_mask = ((xx - cx) ** 2 + (yy - cy) ** 2) <= (plate_radius_px ** 2)
+
+    rgb_f = rgb.astype(np.float32)
+    vmax = np.max(rgb_f, axis=2)
+    vmin = np.min(rgb_f, axis=2)
+    sat = np.where(vmax > 0, (vmax - vmin) / np.maximum(vmax, 1.0), 0.0) * 255.0
+
+    plate_brightness = float(np.median(vmax[plate_mask]))
+    food_mask = plate_mask & (vmax > 18) & (
+        (sat > 24) |
+        (vmax < (plate_brightness - 12))
+    )
+    food_mask = ndi.binary_opening(food_mask, structure=np.ones((3, 3), dtype=bool))
+    food_mask = ndi.binary_closing(food_mask, structure=np.ones((5, 5), dtype=bool))
+
+    hints = _split_food_hints(food_hints_text)
+
+    labels, count = ndi.label(food_mask)
+    plate_pixels = int(np.sum(plate_mask))
+    min_pixels = max(250, int(plate_pixels * 0.01))
+    components = []
+    for label_id in range(1, count + 1):
+        area_px = int(np.sum(labels == label_id))
+        if area_px < min_pixels:
+            continue
+        components.append((label_id, area_px))
+    components.sort(key=lambda x: x[1], reverse=True)
+
+    if not components and np.any(food_mask):
+        components = [(1, int(np.sum(food_mask)))]
+        labels = np.where(food_mask, 1, 0).astype(np.int32)
+
+    # If salad ingredients are touching, split one big mask by color groups.
+    if len(components) == 1 and not hints:
+        main_id = components[0][0]
+        main_mask = labels == main_id
+        r = rgb_f[:, :, 0]
+        g = rgb_f[:, :, 1]
+        b = rgb_f[:, :, 2]
+
+        color_masks = [
+            main_mask & (r > g * 1.12) & (r > b * 1.12),
+            main_mask & (g > r * 1.10) & (g > b * 1.06),
+            main_mask & (r > 165) & (g > 120) & (b < 130),
+            main_mask & (r > 175) & (g > 165) & (b > 145),
+        ]
+
+        split_labels = np.zeros_like(labels, dtype=np.int32)
+        split_components = []
+        next_id = 1
+        for cm in color_masks:
+            if np.sum(cm) < min_pixels:
+                continue
+            cm_labels, cm_count = ndi.label(cm)
+            for cid in range(1, cm_count + 1):
+                seg = cm_labels == cid
+                area_px = int(np.sum(seg))
+                if area_px < min_pixels:
+                    continue
+                split_labels[seg] = next_id
+                split_components.append((next_id, area_px))
+                next_id += 1
+
+        # Add remaining area not covered by color masks.
+        remain = main_mask & (split_labels == 0)
+        if np.sum(remain) >= min_pixels:
+            rm_labels, rm_count = ndi.label(remain)
+            for rid in range(1, rm_count + 1):
+                seg = rm_labels == rid
+                area_px = int(np.sum(seg))
+                if area_px < min_pixels:
+                    continue
+                split_labels[seg] = next_id
+                split_components.append((next_id, area_px))
+                next_id += 1
+
+        if len(split_components) >= 2:
+            labels = split_labels
+            components = sorted(split_components, key=lambda x: x[1], reverse=True)
+
+    # Keep at most 6 dominant regions to avoid noisy tiny fragments.
+    components = components[:6]
+    if not components:
+        # Fallback: treat the whole inner plate region as one mixed food area.
+        labels = np.where(plate_mask, 1, 0).astype(np.int32)
+        fallback_area_px = int(np.sum(plate_mask))
+        components = [(1, fallback_area_px)]
+
+    default_profile = _default_food_profile()
+    plate_area_cm2 = np.pi * (max(float(plate_diameter_cm), 10.0) / 2.0) ** 2
+    cm2_per_px = plate_area_cm2 / max(plate_pixels, 1)
+
+    vis = rgb.copy()
+    region_colors = [
+        np.array([230, 92, 47], dtype=np.uint8),
+        np.array([240, 168, 53], dtype=np.uint8),
+        np.array([76, 175, 80], dtype=np.uint8),
+        np.array([40, 145, 200], dtype=np.uint8),
+        np.array([170, 95, 220], dtype=np.uint8),
+        np.array([220, 70, 130], dtype=np.uint8),
+    ]
+
+    items = []
+    hover_items = []
+    region_map = np.zeros((h, w), dtype=np.uint8)
+    for idx, (label_id, area_px) in enumerate(components):
+        region_mask = labels == label_id
+        region_rgb = rgb[region_mask]
+        hover_id = idx + 1
+        hinted_name = hints[idx] if idx < len(hints) else ''
+        csv_row = _csv_row_first_match(hinted_name) if hinted_name else None
+
+        if csv_row:
+            food_name = csv_row.get('category_name', hinted_name or f'food_{idx + 1}')
+            food_id = int(_safe_float(csv_row.get('category_id', idx + 1), idx + 1))
+            density = _csv_float_value(csv_row, 'density', default=default_profile['density'])
+            calories_pg = _csv_float_value(csv_row, 'calories', default=default_profile['calories_pg'])
+            protein_pg = _csv_float_value(csv_row, 'protein', default=default_profile['protein_pg'])
+            carbs_pg = _csv_float_value(csv_row, 'carbohydrates', default=default_profile['carbs_pg'])
+            fat_pg = _csv_float_value(csv_row, 'fat', default=default_profile['fat_pg'])
+        else:
+            inferred_name = hinted_name or _infer_food_name_from_region(region_rgb)
+            inferred_csv = _csv_row_first_match(inferred_name)
+            if inferred_csv:
+                food_name = inferred_csv.get('category_name', inferred_name)
+                food_id = int(_safe_float(inferred_csv.get('category_id', idx + 1), idx + 1))
+                density = _csv_float_value(inferred_csv, 'density', default=default_profile['density'])
+                calories_pg = _csv_float_value(inferred_csv, 'calories', default=default_profile['calories_pg'])
+                protein_pg = _csv_float_value(inferred_csv, 'protein', default=default_profile['protein_pg'])
+                carbs_pg = _csv_float_value(inferred_csv, 'carbohydrates', default=default_profile['carbs_pg'])
+                fat_pg = _csv_float_value(inferred_csv, 'fat', default=default_profile['fat_pg'])
+            else:
+                food_name = inferred_name
+                food_id = idx + 1
+                density = default_profile['density']
+                calories_pg = default_profile['calories_pg']
+                protein_pg = default_profile['protein_pg']
+                carbs_pg = default_profile['carbs_pg']
+                fat_pg = default_profile['fat_pg']
+
+        area_fraction = float(area_px) / float(max(plate_pixels, 1))
+        area_cm2 = area_px * cm2_per_px
+        thickness_cm = _estimate_segment_thickness_cm(area_fraction, food_name)
+        volume_cm3 = area_cm2 * thickness_cm
+        weight_g = volume_cm3 * max(density, 0.1)
+
+        carbs = weight_g * carbs_pg
+        protein = weight_g * protein_pg
+        fat = weight_g * fat_pg
+        calories = weight_g * calories_pg
+
+        color = region_colors[idx % len(region_colors)]
+        vis[region_mask] = (0.45 * vis[region_mask] + 0.55 * color).astype(np.uint8)
+        region_map[region_mask] = hover_id
+
+        item = {
+            'food_id': int(food_id),
+            'food_name': food_name,
+            'volume_cm3': round(float(volume_cm3), 2),
+            'weight_g': round(float(weight_g), 2),
+            'calories': round(float(calories), 2),
+            'protein': round(float(protein), 2),
+            'fat': round(float(fat), 2),
+            'carbs': round(float(carbs), 2),
+            'fiber': 0.0,
+            'sugars': 0.0,
+        }
+        items.append(item)
+
+        ys, xs = np.where(region_mask)
+        if len(xs) > 0 and len(ys) > 0:
+            bbox = {
+                'x_min': int(np.min(xs)),
+                'y_min': int(np.min(ys)),
+                'x_max': int(np.max(xs)),
+                'y_max': int(np.max(ys)),
+            }
+        else:
+            bbox = {'x_min': 0, 'y_min': 0, 'x_max': 0, 'y_max': 0}
+
+        hover_items.append({
+            'id': int(hover_id),
+            'food_name': item['food_name'],
+            'weight_g': item['weight_g'],
+            'calories': item['calories'],
+            'carbs': item['carbs'],
+            'protein': item['protein'],
+            'fat': item['fat'],
+            'bbox': bbox,
+        })
+
+    items = _aggregate_food_items(items)
+
+    totals = {
+        'total_volume_cm3': round(float(sum(x['volume_cm3'] for x in items)), 2),
+        'total_weight_g': round(float(sum(x['weight_g'] for x in items)), 2),
+        'calories': round(float(sum(x['calories'] for x in items)), 2),
+        'protein': round(float(sum(x['protein'] for x in items)), 2),
+        'fat': round(float(sum(x['fat'] for x in items)), 2),
+        'carbs': round(float(sum(x['carbs'] for x in items)), 2),
+        'fiber': 0.0,
+        'sugars': 0.0,
+        'food_items': items,
+    }
+
+    base_name = os.path.splitext(os.path.basename(image_path))[0]
+    output_dir = os.path.join('static', 'foodseg', base_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    vis_path = os.path.join(output_dir, f'{base_name}_labeled_seg.png')
+    Image.fromarray(vis).save(vis_path)
+
+    region_map_path = os.path.join(output_dir, f'{base_name}_region_map.png')
+    Image.fromarray(region_map, mode='L').save(region_map_path)
+
+    nutrition_json_path = os.path.join(output_dir, f'{base_name}_nutrition.json')
+    with open(nutrition_json_path, 'w', encoding='utf-8') as f:
+        json.dump(totals, f, ensure_ascii=True, indent=4)
+
+    hover_json_path = os.path.join(output_dir, f'{base_name}_hover.json')
+    with open(hover_json_path, 'w', encoding='utf-8') as f:
+        json.dump({'hover_items': hover_items}, f, ensure_ascii=True, indent=4)
+
+    return {
+        'image_origin': f'/static/uploads/{os.path.basename(image_path)}',
+        'output_dir': output_dir,
+        'nutrition_path': nutrition_json_path,
+        'visualization_path': vis_path,
+        'region_map_path': region_map_path,
+        'hover_json_path': hover_json_path,
+        'nutrition': totals,
+    }
 
 def upload_to_gcs(bucket_name, source_file_name, destination_blob_name):
     try:
@@ -247,9 +1203,57 @@ def normalize_food_name(name):
     return ' '.join(_singularize(w) for w in cleaned.split())
 
 
+def _cutouts_for_food(food_name, cutouts_by_food):
+    """Match a nutrition food name to one or more recognized cutout image paths."""
+    target = normalize_food_name(food_name)
+    if not target:
+        return []
+
+    if target in cutouts_by_food:
+        return cutouts_by_food[target]
+
+    # Fallback: allow partial containment when model labels vary slightly.
+    for key, images in cutouts_by_food.items():
+        if not key:
+            continue
+        if key in target or target in key:
+            return images
+
+    return []
+
+
+def _normalize_web_image_path(path):
+    """Normalize stored image path into a browser-safe /static/... URL."""
+    raw = str(path or '').strip()
+    if not raw:
+        return ''
+
+    normalized = raw.replace('\\', '/').strip()
+    if normalized.startswith('http://') or normalized.startswith('https://'):
+        return normalized
+    if normalized.startswith('/static/'):
+        return normalized
+
+    marker = '/static/'
+    idx = normalized.lower().find(marker)
+    if idx >= 0:
+        return normalized[idx:]
+
+    if normalized.startswith('static/'):
+        return '/' + normalized
+
+    return normalized
+
+
 def parse_direct_macro_input(text):
     """Parse direct nutrition input like '100g carb', '-20 fat', '1000kcal', or '-100 kcal'."""
     cleaned = (text or '').strip()
+
+    macro_kcal_per_g = {
+        'carbs': 4.0,
+        'protein': 4.0,
+        'fat': 9.0,
+    }
 
     macro_match = re.match(
         r'^([+-]?\d+(?:\.\d+)?)\s*g?\s*(carb|carbon|carbohydrate|protein|fat)s?$',
@@ -279,6 +1283,7 @@ def parse_direct_macro_input(text):
         else:
             nutrition['fat'] = amount
             macro_label = 'fat'
+        nutrition['calories'] = amount * macro_kcal_per_g[macro_label]
         return {
             'food_name': f"direct {macro_label}",
             'quantity': amount,
@@ -286,7 +1291,7 @@ def parse_direct_macro_input(text):
             'carbs': round(nutrition['carbs'], 2),
             'protein': round(nutrition['protein'], 2),
             'fat': round(nutrition['fat'], 2),
-            'calories': 0.0,
+            'calories': round(nutrition['calories'], 2),
         }
 
     amount = float(calorie_match.group(1))
@@ -589,9 +1594,302 @@ USDA_API_KEY = os.getenv("USDA_API_KEY") or os.getenv("DATA_GOV_API_KEY", "DEMO_
 USDA_BASE_URL = "https://api.nal.usda.gov/fdc/v1"
 
 # Doubao LLM API configuration for nutrition queries
-DOUBAO_API_KEY = os.getenv("DOUBAO_API_KEY", "e1051380-9eac-4253-bd06-cc4fb1fb53db")
+DOUBAO_API_KEY = os.getenv("DOUBAO_API_KEY") or os.getenv("ARK_API_KEY", "")
 DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 DOUBAO_MODEL = "doubao-1-5-pro-32k-250115"
+DOUBAO_IMAGE_MODEL = os.getenv("DOUBAO_IMAGE_MODEL", "doubao-seed-2-0-mini-260215")
+
+
+def _extract_json_object_from_text(text):
+    """Extract first JSON object from model text output."""
+    cleaned = str(text or '').strip()
+    cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*```$', '', cleaned)
+    m = re.search(r'\{.*\}', cleaned, re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+
+def _query_doubao_image_food_mass(image_path, food_hints_text='', part_contexts=None):
+    """Use Doubao vision model to detect foods and estimate mass in grams from one meal image."""
+    if not DOUBAO_API_KEY:
+        return None
+
+    try:
+        with open(image_path, 'rb') as f:
+            image_bytes = f.read()
+        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+    except Exception as e:
+        print(f"[Doubao Vision] Failed to read image: {e}")
+        return None
+
+    hints = [x.strip() for x in re.split(r'[,，;]+', str(food_hints_text or '')) if x.strip()]
+    hint_text = ''
+    if hints:
+        hint_text = 'Possible foods from user hints: ' + ', '.join(hints) + '. Use hints only when visually plausible.'
+    part_context_text = _build_part_context_text(part_contexts)
+
+    prompt = (
+        "You are a nutrition image analyst. Analyze this meal image and estimate foods and their mass. "
+        "Return ONLY valid JSON object with schema: "
+        "{\"foods\":[{\"food_name\":\"string\",\"mass_g\":number,\"confidence\":number}],\"notes\":\"string\"}. "
+        "Rules: 1) 1-8 foods max. 2) food_name concise in English, singular when possible. "
+        "3) mass_g in grams, positive number, realistic meal portions. 4) confidence between 0 and 1. "
+        "5) Prioritize user-provided per-part container sizing context when estimating masses. "
+        "6) food_name must be only the food itself (no cooking style/adjectives/region words), e.g. 'rice', 'beef', 'radish', 'cucumber'. "
+        "7) Do not output markdown/code fences/extra text. "
+        f"{hint_text} {part_context_text}"
+    )
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {DOUBAO_API_KEY}",
+    }
+
+    def _parse_foods_from_model_text(content):
+        parsed = _extract_json_object_from_text(content)
+        if not isinstance(parsed, dict):
+            print(f"[Doubao Vision] Could not parse JSON content: {content}")
+            return None
+
+        foods = parsed.get('foods', [])
+        if not isinstance(foods, list) or not foods:
+            print(f"[Doubao Vision] Empty foods result: {parsed}")
+            return None
+
+        clean = []
+        for item in foods[:8]:
+            if not isinstance(item, dict):
+                continue
+            raw_name = str(item.get('food_name', '') or '').strip()
+            name = _simplify_food_name(raw_name)
+            if not name:
+                continue
+            try:
+                mass = float(item.get('mass_g', 0) or 0)
+            except Exception:
+                mass = 0.0
+            try:
+                conf = float(item.get('confidence', 0.6) or 0.6)
+            except Exception:
+                conf = 0.6
+            if mass <= 0:
+                continue
+            mass = float(np.clip(mass, 5.0, 1200.0))
+            conf = float(np.clip(conf, 0.0, 1.0))
+            clean.append({
+                'food_name': name,
+                'mass_g': mass,
+                'confidence': conf,
+            })
+
+        return clean or None
+
+    try:
+        # Try Chat Completions style first.
+        payload_chat = {
+            "model": DOUBAO_IMAGE_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_b64}"
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]
+                }
+            ],
+            "temperature": 0.1,
+            "max_tokens": 600,
+        }
+        resp = requests.post(DOUBAO_BASE_URL, json=payload_chat, headers=headers, timeout=40)
+        if resp.ok:
+            data = resp.json()
+            content = (
+                (data.get('choices') or [{}])[0]
+                .get('message', {})
+                .get('content', '')
+            )
+            parsed = _parse_foods_from_model_text(content)
+            if parsed:
+                print(f"[Doubao Vision] Parsed foods via chat/completions: {parsed}")
+                return parsed
+        else:
+            print(f"[Doubao Vision] chat/completions failed: {resp.status_code} {resp.text[:300]}")
+
+        # Fallback: try Responses API format used in latest Ark docs.
+        responses_url = "https://ark.cn-beijing.volces.com/api/v3/responses"
+        payload_responses = {
+            "model": DOUBAO_IMAGE_MODEL,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:image/jpeg;base64,{image_b64}",
+                        },
+                        {
+                            "type": "input_text",
+                            "text": prompt,
+                        },
+                    ],
+                }
+            ],
+            "max_output_tokens": 600,
+        }
+        resp2 = requests.post(responses_url, json=payload_responses, headers=headers, timeout=40)
+        resp2.raise_for_status()
+        data2 = resp2.json()
+        content2 = data2.get('output_text', '')
+        if not content2:
+            out = data2.get('output', []) or []
+            chunks = []
+            for item in out:
+                for c in (item.get('content', []) or []):
+                    txt = c.get('text')
+                    if txt:
+                        chunks.append(str(txt))
+            content2 = '\n'.join(chunks)
+
+        parsed2 = _parse_foods_from_model_text(content2)
+        if parsed2:
+            print(f"[Doubao Vision] Parsed foods via responses API: {parsed2}")
+            return parsed2
+        return None
+    except Exception as e:
+        print(f"[Doubao Vision] Request failed: {e}")
+        return None
+
+
+def _build_doubao_meal_analysis(image_path, rgb, food_hints_text='', part_contexts=None):
+    """Build nutrition report from Doubao food+mass predictions."""
+    rows = _query_doubao_image_food_mass(
+        image_path,
+        food_hints_text=food_hints_text,
+        part_contexts=part_contexts,
+    )
+    if not rows:
+        return None
+
+    default_profile = _default_food_profile()
+    raw_items = []
+    hover_items = []
+    h, w = rgb.shape[:2]
+
+    part_lookup = {}
+    for p in (part_contexts or []):
+        try:
+            pid = int(_safe_float((p or {}).get('part_id', 0), 0))
+            if pid > 0:
+                part_lookup[pid] = p
+        except Exception:
+            continue
+
+    for idx, row in enumerate(rows):
+        food_name = row['food_name']
+        weight_g = float(row['mass_g'])
+
+        profile = _food_profile_from_name(food_name, default_profile=default_profile)
+        resolved_name = profile.get('food_name', food_name)
+        density = max(float(profile.get('density', default_profile['density']) or default_profile['density']), 0.1)
+
+        calories = round(weight_g * float(profile['calories_pg']), 2)
+        carbs = round(weight_g * float(profile['carbs_pg']), 2)
+        protein = round(weight_g * float(profile['protein_pg']), 2)
+        fat = round(weight_g * float(profile['fat_pg']), 2)
+        volume_cm3 = round(weight_g / density, 2)
+
+        item = {
+            'food_id': int(profile.get('food_id', idx + 1) or (idx + 1)),
+            'food_name': resolved_name,
+            'volume_cm3': round(volume_cm3, 2),
+            'weight_g': round(weight_g, 2),
+            'calories': calories,
+            'protein': protein,
+            'fat': fat,
+            'carbs': carbs,
+            'fiber': 0.0,
+            'sugars': 0.0,
+        }
+        raw_items.append(item)
+
+        # Without grounding coordinates, use full-image bbox placeholders for hover metadata.
+        part_id = int(idx + 1)
+        part_meta = part_lookup.get(part_id, {})
+        hover_items.append({
+            'id': part_id,
+            'food_name': item['food_name'],
+            'weight_g': item['weight_g'],
+            'calories': item['calories'],
+            'carbs': item['carbs'],
+            'protein': item['protein'],
+            'fat': item['fat'],
+            'cutout_image': str(part_meta.get('cutout_image', '') or ''),
+            'bbox': {
+                'x_min': 0,
+                'y_min': 0,
+                'x_max': int(max(w - 1, 0)),
+                'y_max': int(max(h - 1, 0)),
+            },
+            'confidence': round(float(row.get('confidence', 0.6)), 3),
+        })
+
+    items = _aggregate_food_items(raw_items)
+    totals = {
+        'total_volume_cm3': round(float(sum(x['volume_cm3'] for x in items)), 2),
+        'total_weight_g': round(float(sum(x['weight_g'] for x in items)), 2),
+        'calories': round(float(sum(x['calories'] for x in items)), 2),
+        'protein': round(float(sum(x['protein'] for x in items)), 2),
+        'fat': round(float(sum(x['fat'] for x in items)), 2),
+        'carbs': round(float(sum(x['carbs'] for x in items)), 2),
+        'fiber': 0.0,
+        'sugars': 0.0,
+        'food_items': items,
+        'analysis_source': DOUBAO_IMAGE_MODEL,
+    }
+
+    from PIL import Image
+
+    base_name = os.path.splitext(os.path.basename(image_path))[0]
+    output_dir = os.path.join('static', 'foodseg', base_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    vis_path = os.path.join(output_dir, f'{base_name}_labeled_seg.png')
+    Image.fromarray(rgb).save(vis_path)
+
+    region_map = np.zeros((h, w), dtype=np.uint8)
+    region_map_path = os.path.join(output_dir, f'{base_name}_region_map.png')
+    Image.fromarray(region_map, mode='L').save(region_map_path)
+
+    nutrition_json_path = os.path.join(output_dir, f'{base_name}_nutrition.json')
+    with open(nutrition_json_path, 'w', encoding='utf-8') as f:
+        json.dump(totals, f, ensure_ascii=True, indent=4)
+
+    hover_json_path = os.path.join(output_dir, f'{base_name}_hover.json')
+    with open(hover_json_path, 'w', encoding='utf-8') as f:
+        json.dump({'hover_items': hover_items}, f, ensure_ascii=True, indent=4)
+
+    return {
+        'image_origin': f'/static/uploads/{os.path.basename(image_path)}',
+        'output_dir': output_dir,
+        'nutrition_path': nutrition_json_path,
+        'visualization_path': vis_path,
+        'region_map_path': region_map_path,
+        'hover_json_path': hover_json_path,
+        'nutrition': totals,
+    }
 
 def query_doubao_nutrition(food_name, quantity, unit):
     """
@@ -1272,14 +2570,212 @@ def main():
     # Redirect base URL to chatbot page
     return redirect('/chatbot')
 
+
+@app.route('/upload_image', methods=["GET", "POST"])
+def upload_image():
+    if request.method == 'GET':
+        return render_template('upload-image.html')
+
+    file = request.files.get('upload-image')
+    if not file or not file.filename:
+        return render_template('upload-image.html', error='Please choose an image file.'), 400
+
+    filename = secure_filename(file.filename)
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        ext = _uploaded_image_extension(file, filename)
+    if not ext:
+        return render_template('upload-image.html', error='Supported image types: JPG, JPEG, PNG, WEBP, JFIF, BMP, TIFF.'), 400
+
+    saved_name = f"meal_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}{ext}"
+    upload_dir = os.path.abspath(app.config['UPLOAD_FOLDER'])
+    os.makedirs(upload_dir, exist_ok=True)
+    save_path = os.path.join(upload_dir, saved_name)
+    file.save(save_path)
+
+    food_hints = request.form.get('food-hints', '')
+    plate_diameter_cm = _safe_float(request.form.get('plate-diameter-cm', DEFAULT_PLATE_DIAMETER_CM), DEFAULT_PLATE_DIAMETER_CM)
+
+    try:
+        prep = prepare_image_parts_for_sizing(
+            image_path=save_path,
+            food_hints_text=food_hints,
+            plate_diameter_cm=plate_diameter_cm,
+        )
+    except Exception as e:
+        print(f'[ERROR] upload_image pre-analysis failed: {e}')
+        return render_template('upload-image.html', error=f'Image analysis failed: {e}'), 500
+
+    return render_template('image-part-sizing.html', prep=prep)
+
+
+@app.route('/analyze_image_parts', methods=['POST'])
+def analyze_image_parts():
+    """Finalize image nutrition after user confirms per-part container sizes."""
+    image_filename = os.path.basename(str(request.form.get('image_filename', '') or '').strip())
+    if not image_filename:
+        return render_template('upload-image.html', error='Missing image info. Please upload again.'), 400
+
+    metadata = _load_parts_metadata(image_filename)
+    if not metadata:
+        return render_template('upload-image.html', error='Part metadata missing. Please upload again.'), 400
+
+    image_path = os.path.join(os.path.abspath(app.config['UPLOAD_FOLDER']), image_filename)
+    if not os.path.exists(image_path):
+        return render_template('upload-image.html', error='Uploaded image file was not found. Please upload again.'), 404
+
+    part_ids = request.form.getlist('part_id')
+    food_names = request.form.getlist('food_name')
+    container_types = request.form.getlist('container_type')
+    container_sizes = request.form.getlist('container_size_cm')
+    container_depths = request.form.getlist('container_depth_cm')
+    fill_ratios = request.form.getlist('fill_ratio')
+
+    meta_part_map = {}
+    for item in (metadata.get('parts') or []):
+        try:
+            pid = int(_safe_float((item or {}).get('part_id', 0), 0))
+            if pid > 0:
+                meta_part_map[pid] = item
+        except Exception:
+            continue
+
+    part_contexts = []
+    for idx, raw_id in enumerate(part_ids):
+        part_id = int(_safe_float(raw_id, 0))
+        if part_id <= 0:
+            continue
+
+        meta_part = meta_part_map.get(part_id, {})
+        food_name = str(food_names[idx] if idx < len(food_names) else '').strip() or str(meta_part.get('food_name', '') or '')
+        part_contexts.append({
+            'part_id': part_id,
+            'food_name': food_name or f'food_part_{part_id}',
+            'container_type': str(container_types[idx] if idx < len(container_types) else 'plate').strip() or 'plate',
+            'container_size_cm': _safe_float(container_sizes[idx] if idx < len(container_sizes) else '', metadata.get('plate_diameter_cm', DEFAULT_PLATE_DIAMETER_CM)),
+            'container_depth_cm': _safe_float(container_depths[idx] if idx < len(container_depths) else '', 2.0),
+            'fill_ratio': _safe_float(fill_ratios[idx] if idx < len(fill_ratios) else '', 0.6),
+            'cutout_image': str(meta_part.get('cutout_image', '') or ''),
+        })
+
+    part_contexts.sort(key=lambda x: x.get('part_id', 0))
+    food_hints_text = ', '.join([p['food_name'] for p in part_contexts if str(p.get('food_name', '')).strip()])
+
+    try:
+        result = analyze_uploaded_meal_image(
+            image_path=image_path,
+            food_hints_text=food_hints_text,
+            plate_diameter_cm=_safe_float(metadata.get('plate_diameter_cm', DEFAULT_PLATE_DIAMETER_CM), DEFAULT_PLATE_DIAMETER_CM),
+            part_contexts=part_contexts,
+        )
+    except Exception as e:
+        print(f'[ERROR] analyze_image_parts failed: {e}')
+        prep_fallback = metadata
+        prep_fallback['error'] = f'Nutrition analysis failed: {e}'
+        return render_template('image-part-sizing.html', prep=prep_fallback), 500
+
+    return redirect(url_for('nutrition_calculation', path=result['image_origin']))
+
 @app.route('/nutrition_calculation', methods=["GET", "POST"])
 def nutrition_calculation():
-    path = request.args.get('path')
-    name = path.split("/")[3].split('.')[0]
-    with open('./static/foodseg/' + name + '/' + name + "_nutrition.json") as f: nutrition_data = json.load(f)
+    path = request.args.get('path', '')
+    if not path:
+        return redirect(url_for('upload_image'))
+
+    image_filename = os.path.basename(path)
+    name = os.path.splitext(image_filename)[0]
+    nutrition_path = os.path.join('.', 'static', 'foodseg', name, f'{name}_nutrition.json')
+    if not os.path.exists(nutrition_path):
+        return render_template('upload-image.html', error='Nutrition output was not found for this image. Please upload again.'), 404
+
+    with open(nutrition_path, 'r', encoding='utf-8') as f:
+        nutrition_data = json.load(f)
+
+    part_cutouts = []
+    parts_meta = _load_parts_metadata(image_filename)
+    if isinstance(parts_meta, dict):
+        part_cutouts = parts_meta.get('parts', []) or []
+    if not part_cutouts:
+        try:
+            upload_disk = os.path.join(os.path.abspath(app.config['UPLOAD_FOLDER']), image_filename)
+            if os.path.exists(upload_disk):
+                prepare_image_parts_for_sizing(
+                    image_path=upload_disk,
+                    food_hints_text='',
+                    plate_diameter_cm=DEFAULT_PLATE_DIAMETER_CM,
+                )
+                parts_meta = _load_parts_metadata(image_filename)
+                if isinstance(parts_meta, dict):
+                    part_cutouts = parts_meta.get('parts', []) or []
+        except Exception as cutout_err:
+            print(f"[WARN] Failed to backfill cutout previews: {cutout_err}")
+
+    for p in part_cutouts:
+        if isinstance(p, dict):
+            p['cutout_image'] = _normalize_web_image_path(p.get('cutout_image', ''))
+
+    hover_items = []
+    hover_path = os.path.join('.', 'static', 'foodseg', name, f'{name}_hover.json')
+    if os.path.exists(hover_path):
+        try:
+            with open(hover_path, 'r', encoding='utf-8') as f:
+                hover_data = json.load(f)
+            hover_items = hover_data.get('hover_items', []) or []
+            cutout_by_id = {}
+            for p in part_cutouts:
+                pid = int(_safe_float((p or {}).get('part_id', 0), 0))
+                if pid > 0:
+                    cutout_by_id[pid] = str((p or {}).get('cutout_image', '') or '')
+            for item in hover_items:
+                pid = int(_safe_float((item or {}).get('id', 0), 0))
+                if pid in cutout_by_id and not item.get('cutout_image'):
+                    item['cutout_image'] = cutout_by_id[pid]
+                item['cutout_image'] = _normalize_web_image_path(item.get('cutout_image', ''))
+        except Exception as e:
+            print(f"[WARN] Failed to load hover metadata: {e}")
+
+    cutouts_by_food = {}
+    for item in hover_items:
+        food_key = normalize_food_name(str((item or {}).get('food_name', '') or ''))
+        cutout_img = _normalize_web_image_path((item or {}).get('cutout_image', ''))
+        if not food_key or not cutout_img:
+            continue
+        cutouts_by_food.setdefault(food_key, [])
+        if cutout_img not in cutouts_by_food[food_key]:
+            cutouts_by_food[food_key].append(cutout_img)
+
+    fallback_cutouts = []
+    for p in part_cutouts:
+        img = _normalize_web_image_path((p or {}).get('cutout_image', ''))
+        if img and img not in fallback_cutouts:
+            fallback_cutouts.append(img)
+
+    for idx, food_item in enumerate((nutrition_data.get('food_items') or [])):
+        fname = str((food_item or {}).get('food_name', '') or '')
+        matched = _cutouts_for_food(fname, cutouts_by_food)
+        if not matched and fallback_cutouts:
+            matched = [fallback_cutouts[idx % len(fallback_cutouts)]]
+        food_item['recognized_parts'] = matched
+
+    region_map_web = './static/foodseg/' + name + '/' + name + "_region_map.png"
+    region_map_disk = os.path.join('.', 'static', 'foodseg', name, f'{name}_region_map.png')
+    ensure_nutrition_csv_fresh()
+    food_name_options = []
+    for row in (csv_data or []):
+        cname = str(row.get('category_name', '') or '').strip()
+        if not cname or normalize_food_name(cname) == 'background':
+            continue
+        food_name_options.append(cname)
+    food_name_options = sorted(set(food_name_options), key=lambda x: x.lower())
+
     results = {
+        'image_name': name,
         'image_origin': path,
         'image_seglab': './static/foodseg/' + name + '/' + name + "_labeled_seg.png",
+        'image_region_map': region_map_web if os.path.exists(region_map_disk) else '',
+        'part_cutouts': part_cutouts,
+        'hover_items': hover_items,
+        'food_name_options': food_name_options,
         'image_report': nutrition_data
     }
 
@@ -1978,10 +3474,21 @@ def recommend(gender, age, height, weight, carbohydrate, protein, fat, activity,
                 cumulative_z += z  # advance the stack by this item's thickness
         # Folder name hint for client-side direct folder save (no ZIP packaging).
         folder_name = ''
+        obj_name = ''
         if MESH_MODE != 'none' and material_mesh_list:
             folder_name = f"{datetime.now().strftime('%Y%m%d')}_option{index + 1}"
 
-        results.append((material_mesh_list, round(carbohydrate_supplement, 2), round(protein_supplement, 2), round(fat_supplement, 2), folder_name))
+        # Build one stacked OBJ per option so all blocks can be opened as a single model.
+        if material_mesh_list:
+            try:
+                obj_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_option{index + 1}_{uuid.uuid4().hex[:6]}.obj"
+                obj_path = os.path.join(tempfile.gettempdir(), obj_name)
+                create_obj_from_items(material_mesh_list, obj_path)
+            except Exception as obj_err:
+                print(f"[WARN] Failed to create OBJ for option {index + 1}: {obj_err}")
+                obj_name = ''
+
+        results.append((material_mesh_list, round(carbohydrate_supplement, 2), round(protein_supplement, 2), round(fat_supplement, 2), folder_name, obj_name))
 
     # print(results)
 
@@ -2231,14 +3738,86 @@ def api_search_food():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/analyze-image-nutrition', methods=['POST'])
+def api_analyze_image_nutrition():
+    """Analyze one meal image and return nutrition directly for chatbot ingestion."""
+    try:
+        file = request.files.get('image')
+        food_hints = str(request.form.get('food_hints', '') or '').strip()
+        plate_diameter_cm = _safe_float(
+            request.form.get('plate_diameter_cm', DEFAULT_PLATE_DIAMETER_CM),
+            DEFAULT_PLATE_DIAMETER_CM,
+        )
+
+        if not file or not file.filename:
+            return jsonify({'error': 'Please provide an image file.'}), 400
+
+        filename = secure_filename(file.filename)
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in ALLOWED_IMAGE_EXTENSIONS:
+            ext = _uploaded_image_extension(file, filename)
+        if not ext:
+            return jsonify({'error': 'Supported image types: JPG, JPEG, PNG, WEBP, JFIF, BMP, TIFF.'}), 400
+
+        saved_name = f"meal_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}{ext}"
+        upload_dir = os.path.abspath(app.config['UPLOAD_FOLDER'])
+        os.makedirs(upload_dir, exist_ok=True)
+        save_path = os.path.join(upload_dir, saved_name)
+        file.save(save_path)
+
+        result = analyze_uploaded_meal_image(
+            image_path=save_path,
+            food_hints_text=food_hints,
+            plate_diameter_cm=plate_diameter_cm,
+        )
+
+        nutrition = result.get('nutrition', {}) or {}
+        food_items = nutrition.get('food_items', []) or []
+
+        return jsonify({
+            'success': True,
+            'image_origin': result.get('image_origin', ''),
+            'analysis_source': nutrition.get('analysis_source', 'heuristic-segmentation'),
+            'nutrition': {
+                'calories': round(float(nutrition.get('calories', 0) or 0), 2),
+                'carbs': round(float(nutrition.get('carbs', 0) or 0), 2),
+                'protein': round(float(nutrition.get('protein', 0) or 0), 2),
+                'fat': round(float(nutrition.get('fat', 0) or 0), 2),
+            },
+            'food_items': [
+                {
+                    'food_id': int(item.get('food_id', 0) or 0),
+                    'food_name': str(item.get('food_name', 'unknown food') or 'unknown food'),
+                    'weight_g': round(float(item.get('weight_g', 0) or 0), 2),
+                    'volume_cm3': round(float(item.get('volume_cm3', 0) or 0), 2),
+                    'calories': round(float(item.get('calories', 0) or 0), 2),
+                    'carbs': round(float(item.get('carbs', 0) or 0), 2),
+                    'protein': round(float(item.get('protein', 0) or 0), 2),
+                    'fat': round(float(item.get('fat', 0) or 0), 2),
+                }
+                for item in food_items
+            ]
+        }), 200
+    except Exception as e:
+        print(f"Error in api_analyze_image_nutrition: {e}")
+        if DIAG_MODE:
+            return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Image nutrition analysis failed.'}), 500
 @app.route('/api/calculate-recommendation', methods=['POST'])
 def api_calculate_recommendation():
     """Calculate nutrition recommendation based on user info and daily intake"""
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            data = {}
         user_id = data.get('user_id')
         user_info = data.get('user_info', {})
         daily_nutrition = data.get('daily_nutrition', {})
+        if not isinstance(user_info, dict):
+            user_info = {}
+        if not isinstance(daily_nutrition, dict):
+            daily_nutrition = {}
 
         if not data:
             return jsonify({'error': 'Request body missing. Send JSON with user_info and daily_nutrition.'}), 400
@@ -2265,7 +3844,7 @@ def api_calculate_recommendation():
         age = to_int(user_info.get('age'), 0)
         height = to_float(user_info.get('height'), 0)
         weight = to_float(user_info.get('weight'), 0)
-        carbs = to_float(daily_nutrition.get('carbs'), 0)
+        carbs = to_float(daily_nutrition.get('carbs', daily_nutrition.get('carbohydrate')), 0)
         protein = to_float(daily_nutrition.get('protein'), 0)
         fat = to_float(daily_nutrition.get('fat'), 0)
         activity = to_int(user_info.get('activity'), 0)
@@ -2308,6 +3887,8 @@ def api_calculate_recommendation():
         # Call existing recommendation function with a robust fallback
         try:
             recommend_dict = recommend(gender, age, height, weight, carbs, protein, fat, activity, diet, preference, preferred_foods)
+            if not isinstance(recommend_dict, dict):
+                raise ValueError('recommend() returned an invalid payload')
         except Exception as rec_err:
             # Fallback: compute targets and needs without optimization/meshes
             try:
@@ -2354,6 +3935,7 @@ def api_calculate_recommendation():
                 'activity': activity,
                 'diet': diet,
                 'preference': preference,
+                'preferred_foods': preferred_foods,
             },
             daily_nutrition={
                 'carbs': carbs,
@@ -2432,6 +4014,115 @@ def api_calculate_custom_recipes():
             return jsonify({'error': str(e)}), 500
         return jsonify({'error': 'Custom recipe calculation failed.'}), 500
 
+
+@app.route('/api/update-image-food-label', methods=['POST'])
+def api_update_image_food_label():
+    """Relabel one detected image region and recompute meal nutrition totals."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        image_name = str(payload.get('image_name', '') or '').strip()
+        region_id = int(payload.get('region_id', 0) or 0)
+        food_name = str(payload.get('food_name', '') or '').strip()
+
+        if not image_name:
+            return jsonify({'error': 'image_name is required.'}), 400
+        if region_id <= 0:
+            return jsonify({'error': 'region_id must be > 0.'}), 400
+        if not food_name:
+            return jsonify({'error': 'food_name is required.'}), 400
+
+        # Basic path safety
+        safe_image_name = os.path.basename(image_name)
+        if safe_image_name != image_name:
+            return jsonify({'error': 'Invalid image_name.'}), 400
+
+        base_dir = os.path.join('.', 'static', 'foodseg', safe_image_name)
+        hover_path = os.path.join(base_dir, f'{safe_image_name}_hover.json')
+        nutrition_path = os.path.join(base_dir, f'{safe_image_name}_nutrition.json')
+
+        if not os.path.exists(hover_path):
+            return jsonify({'error': 'Hover metadata not found for this image.'}), 404
+
+        with open(hover_path, 'r', encoding='utf-8') as f:
+            hover_data = json.load(f)
+
+        hover_items = hover_data.get('hover_items', []) or []
+        target = None
+        for item in hover_items:
+            if int(item.get('id', 0) or 0) == region_id:
+                target = item
+                break
+
+        if target is None:
+            return jsonify({'error': f'Region {region_id} not found.'}), 404
+
+        default_profile = _default_food_profile()
+        profile = _food_profile_from_name(food_name, default_profile=default_profile)
+
+        weight_g = float(target.get('weight_g', 0) or 0)
+        density = max(float(profile.get('density', default_profile['density']) or default_profile['density']), 0.1)
+        calories = round(weight_g * float(profile['calories_pg']), 2)
+        carbs = round(weight_g * float(profile['carbs_pg']), 2)
+        protein = round(weight_g * float(profile['protein_pg']), 2)
+        fat = round(weight_g * float(profile['fat_pg']), 2)
+        volume_cm3 = round(weight_g / density, 2)
+
+        target['food_name'] = profile['food_name']
+        target['calories'] = calories
+        target['carbs'] = carbs
+        target['protein'] = protein
+        target['fat'] = fat
+        target['weight_g'] = round(weight_g, 2)
+        target['volume_cm3'] = volume_cm3
+        target['food_id'] = int(profile.get('food_id', 0) or 0)
+
+        with open(hover_path, 'w', encoding='utf-8') as f:
+            json.dump({'hover_items': hover_items}, f, ensure_ascii=True, indent=4)
+
+        rebuilt_items = []
+        for it in hover_items:
+            rebuilt_items.append({
+                'food_id': int(it.get('food_id', 0) or 0),
+                'food_name': str(it.get('food_name', 'unknown food') or 'unknown food'),
+                'volume_cm3': round(float(it.get('volume_cm3', 0) or 0), 2),
+                'weight_g': round(float(it.get('weight_g', 0) or 0), 2),
+                'calories': round(float(it.get('calories', 0) or 0), 2),
+                'protein': round(float(it.get('protein', 0) or 0), 2),
+                'fat': round(float(it.get('fat', 0) or 0), 2),
+                'carbs': round(float(it.get('carbs', 0) or 0), 2),
+                'fiber': 0.0,
+                'sugars': 0.0,
+            })
+
+        aggregated_items = _aggregate_food_items(rebuilt_items)
+        totals = {
+            'total_volume_cm3': round(float(sum(x['volume_cm3'] for x in aggregated_items)), 2),
+            'total_weight_g': round(float(sum(x['weight_g'] for x in aggregated_items)), 2),
+            'calories': round(float(sum(x['calories'] for x in aggregated_items)), 2),
+            'protein': round(float(sum(x['protein'] for x in aggregated_items)), 2),
+            'fat': round(float(sum(x['fat'] for x in aggregated_items)), 2),
+            'carbs': round(float(sum(x['carbs'] for x in aggregated_items)), 2),
+            'fiber': 0.0,
+            'sugars': 0.0,
+            'food_items': aggregated_items,
+        }
+
+        with open(nutrition_path, 'w', encoding='utf-8') as f:
+            json.dump(totals, f, ensure_ascii=True, indent=4)
+
+        return jsonify({
+            'success': True,
+            'hover_items': hover_items,
+            'nutrition': totals,
+            'resolved_food_name': profile['food_name'],
+            'food_found_in_csv': profile['found'],
+        }), 200
+    except Exception as e:
+        print(f"Error in api_update_image_food_label: {e}")
+        if DIAG_MODE:
+            return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Failed to update image food label.'}), 500
+
 @app.route('/api/user-records', methods=['GET', 'POST'])
 def api_user_records():
     """Create/list backend user records for multi-user support."""
@@ -2456,9 +4147,9 @@ def api_user_records():
         
         # Handle creation with just a name (from multi-user UI)
         if 'name' in data and 'user_id' not in data:
-            user_id = str(uuid.uuid4())
             user_info = {'name': data.get('name')}
-            saved = save_user_record(user_id=user_id, user_info=user_info)
+            saved = save_user_record(user_id=None, user_info=user_info)
+            user_id = saved.get('user_id')
             return jsonify({
                 'success': True, 
                 'user': {

@@ -1,261 +1,344 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="en">
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ELEVATEFOODS - Nutrition Workflow</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/base.css">
-    <link rel="stylesheet" href="/static/chatbot.css?v=12">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ELEVATEFOODS - Food Chatbot</title>
+    <link rel="stylesheet" href="/static/chatbot.css?v=ui-rebuild-9">
 </head>
-
 <body>
-    <header>
-        <div class="brand">
+    <header class="app-topbar">
+        <div class="topbar-left">
             <img src="/static/elevatefoods-logo.jpeg" alt="ELEVATEFOODS" class="brand-logo">
+            <div class="brand-copy">
+                <strong>Nutrition Assistant</strong>
+                <span>AI Nutrition Workflow</span>
+            </div>
         </div>
-        <div class="user-account-section">
-            <div class="current-user-display">
-                <span class="user-label">User:</span>
-                <span class="user-name" id="current-user-name">Guest</span>
+        <div class="topbar-right">
+            <div class="active-user-chip">
+                <span>Active User</span>
+                <strong id="active-user-name">Guest</strong>
             </div>
-            <div class="user-controls">
-                <button type="button" id="switch-user-btn" class="btn-secondary" title="Switch or create user account">Switch User</button>
-                <button type="button" id="calendar-btn" class="btn-secondary" title="View nutrition calendar">📅 Calendar</button>
-            </div>
+            <button type="button" id="open-user-manager" class="btn-secondary">Users</button>
+            <button type="button" id="quick-save-day" class="btn-secondary">Save Day</button>
         </div>
     </header>
 
-    <!-- Clear Confirm Modal -->
-    <div id="clear-confirm-modal" class="modal" style="display: none;">
-        <div class="modal-content" style="max-width: 380px; text-align: center;">
-            <div class="modal-header" style="justify-content: center; border-bottom: none; padding-bottom: 0;">
-                <span style="font-size: 2rem;">🗑️</span>
-            </div>
-            <div class="modal-body" style="padding-top: 8px;">
-                <h3 style="margin: 0 0 8px; font-size: 1.1rem;">Clear all food entries?</h3>
-                <p style="margin: 0 0 20px; color: #888; font-size: 0.9rem;">This will reset today's tracker. You can undo immediately after.</p>
-                <div style="display: flex; gap: 10px; justify-content: center;">
-                    <button id="clear-cancel-btn" class="btn-secondary" style="flex: 1; max-width: 140px;">Cancel</button>
-                    <button id="clear-confirm-btn" class="btn-primary" style="flex: 1; max-width: 140px; background: #e74c3c; border-color: #e74c3c;">Clear</button>
-                </div>
-            </div>
-        </div>
-    </div>
+    <div class="app-shell">
+        <aside class="left-nav">
+            <button class="nav-item active" data-page="dashboard">Dashboard</button>
+            <button class="nav-item" data-page="users">Users / Profiles</button>
+            <button class="nav-item" data-page="log">Log Intake</button>
+            <button class="nav-item" data-page="recommendations">Recommendations</button>
+            <button class="nav-item" data-page="calendar">Calendar</button>
+            <button class="nav-item" data-page="history">History / Records</button>
+            <button class="nav-item" data-page="settings">Settings</button>
+        </aside>
+        <button type="button" id="toggle-left-nav" class="nav-collapse-handle" aria-label="Toggle side menu" title="Hide menu">◀</button>
 
-    <!-- Calendar Modal -->
-    <div id="calendar-modal" class="modal" style="display: none;">
-        <div class="modal-content cal-modal-content">
-            <div class="modal-header">
-                <h2>Nutrition Calendar</h2>
-                <button type="button" class="modal-close" id="close-calendar-modal">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div id="cal-calendar-view">
-                    <div class="cal-nav">
-                        <button type="button" id="cal-prev" class="cal-nav-btn">&#8249;</button>
-                        <span id="cal-month-label" class="cal-month-label"></span>
-                        <div class="cal-nav-actions">
-                            <button type="button" id="cal-today" class="cal-today-btn">Today</button>
-                            <button type="button" id="cal-next" class="cal-nav-btn">&#8250;</button>
+        <main class="workspace">
+            <section id="page-dashboard" class="page active">
+                <div class="page-head">
+                    <h1>Dashboard</h1>
+                    <p>Daily snapshot for your active profile and today intake.</p>
+                </div>
+                <div class="dashboard-grid">
+                    <article class="card active-user-card">
+                        <h3>Active Profile</h3>
+                        <div id="dashboard-user-summary">No active user yet.</div>
+                    </article>
+                    <article class="card quick-actions-card">
+                        <h3>Quick Add By</h3>
+                        <div class="quick-actions-row">
+                            <button type="button" class="quick-action" data-jump-tab="food">Food Name</button>
+                            <button type="button" class="quick-action" data-jump-tab="macros">Macros</button>
+                            <button type="button" class="quick-action" data-jump-tab="image">Image</button>
                         </div>
+                    </article>
+                    <article class="card trend-card">
+                        <h3>7-Day Nutrition Trend</h3>
+                        <canvas id="trend-canvas" aria-label="Weekly nutrition trend"></canvas>
+                    </article>
+                    <article class="card recommendation-snapshot">
+                        <h3>Recommendation Snapshot</h3>
+                        <div id="recommendation-snapshot-content">No recommendation generated yet.</div>
+                        <button type="button" id="go-recommendations" class="btn-primary slim">Open Recommendations</button>
+                    </article>
+                </div>
+                <article class="card">
+                    <div class="card-head-row">
+                        <h3>Today Intake Timeline</h3>
+                        <button type="button" class="btn-secondary slim" id="go-calendar">Open Calendar</button>
                     </div>
-                    <div class="cal-legend" aria-label="Nutrition health states">
-                        <span class="cal-legend-item"><span class="cal-dot cal-dot-good"></span>Healthy</span>
-                        <span class="cal-legend-item"><span class="cal-dot cal-dot-fair"></span>Slightly Low</span>
-                        <span class="cal-legend-item"><span class="cal-dot cal-dot-low"></span>Low</span>
-                        <span class="cal-legend-item"><span class="cal-dot cal-dot-high"></span>High</span>
-                        <span class="cal-legend-item"><span class="cal-dot cal-dot-excess"></span>Excess</span>
-                    </div>
-                    <div class="cal-dow-header">
-                        <span>Sun</span><span>Mon</span><span>Tue</span>
-                        <span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
-                    </div>
-                    <div class="cal-grid" id="cal-grid"></div>
-                </div>
-                <div id="cal-day-detail" class="cal-day-detail" style="display:none;"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- User Account Modal -->
-    <div id="user-modal" class="modal" style="display: none;">
-        <div class="modal-content user-modal-content">
-            <div class="modal-header">
-                <div class="modal-title-group">
-                    <span class="modal-icon">👥</span>
-                    <h2>User Accounts</h2>
-                </div>
-                <button type="button" class="modal-close" id="close-user-modal">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div id="user-list" class="user-list">
-                    <!-- Populated by JS -->
-                </div>
-                <div class="user-create-row">
-                    <input type="text" id="new-user-name" placeholder="New user name…" autocomplete="off">
-                    <button type="button" id="create-user-btn" class="btn-create-user">+ Add</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <main>
-        <div class="chatbot-container">
-            <!-- Sidebar with nutrition summary -->
-            <aside class="nutrition-sidebar">
-                <div class="sidebar-panel">
-                    <h3>Today's Intake</h3>
-                    <!-- Progress bars: show intake / target when profile filled, intake-only otherwise -->
-                    <div id="intake-progress">
-                        <div class="intake-bar-group">
-                            <div class="intake-bar-label">
-                                <span>Calories</span>
-                                <span id="calories-progress-text">0 kcal</span>
-                            </div>
-                            <div class="intake-bar-track">
-                                <div class="intake-bar-fill calories-bar" id="calories-bar" style="width:0%"></div>
-                                <div class="intake-bar-excess" id="calories-bar-excess" style="width:0%"></div>
-                            </div>
-                        </div>
-                        <div class="intake-bar-group">
-                            <div class="intake-bar-label">
-                                <span>Carbs</span>
-                                <span id="carbs-progress-text">0 g</span>
-                            </div>
-                            <div class="intake-bar-track">
-                                <div class="intake-bar-fill carbs-bar" id="carbs-bar" style="width:0%"></div>
-                                <div class="intake-bar-excess" id="carbs-bar-excess" style="width:0%"></div>
-                            </div>
-                        </div>
-                        <div class="intake-bar-group">
-                            <div class="intake-bar-label">
-                                <span>Protein</span>
-                                <span id="protein-progress-text">0 g</span>
-                            </div>
-                            <div class="intake-bar-track">
-                                <div class="intake-bar-fill protein-bar" id="protein-bar" style="width:0%"></div>
-                                <div class="intake-bar-excess" id="protein-bar-excess" style="width:0%"></div>
-                            </div>
-                        </div>
-                        <div class="intake-bar-group">
-                            <div class="intake-bar-label">
-                                <span>Fat</span>
-                                <span id="fat-progress-text">0 g</span>
-                            </div>
-                            <div class="intake-bar-track">
-                                <div class="intake-bar-fill fat-bar" id="fat-bar" style="width:0%"></div>
-                                <div class="intake-bar-excess" id="fat-bar-excess" style="width:0%"></div>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="display: flex; gap: 8px; margin-top: 8px;">
-                        <button id="undo-btn" class="btn-secondary" style="flex: 1; padding: 8px; font-size: 12px;" title="Undo last food entry">↶ Undo</button>
-                        <button id="clear-btn" class="btn-secondary" style="flex: 1; padding: 8px; font-size: 12px;" title="Clear all food entries">✕ Clear All</button>
-                    </div>
-                    <button id="analyze-btn" class="btn-primary" style="width: 100%; margin-top: 8px;">Get Recommendations</button>
-                </div>
-
-                <div class="sidebar-panel">
-                    <h3>Your Info</h3>
-                    <form id="user-info-form" class="user-info-form">
-                        <div class="form-row">
-                            <div class="form-field">
-                                <label>Gender</label>
-                                <div class="radio-group-compact">
-                                    <label><input type="radio" name="gender" value="0"> M</label>
-                                    <label><input type="radio" name="gender" value="1"> F</label>
-                                </div>
-                            </div>
-                            <div class="form-field">
-                                <label>Age</label>
-                                <input type="number" name="age" placeholder="Years">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-field">
-                                <label>Height</label>
-                                <input type="number" name="height" placeholder="cm">
-                            </div>
-                            <div class="form-field">
-                                <label>Weight</label>
-                                <input type="number" name="weight" placeholder="kg">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-field">
-                                <label>Activity</label>
-                                <select name="activity">
-                                    <option value="">Select...</option>
-                                    <option value="0">Sedentary</option>
-                                    <option value="1">Low Active</option>
-                                    <option value="2">Active</option>
-                                    <option value="3">Very Active</option>
-                                </select>
-                            </div>
-                            <div class="form-field">
-                                <label>Diet</label>
-                                <select name="diet">
-                                    <option value="">Select...</option>
-                                    <option value="0">Balanced</option>
-                                    <option value="1">Low Fat</option>
-                                    <option value="2">Low Carb</option>
-                                    <option value="3">High Protein</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="form-field">
-                            <label>Preference</label>
-                            <div class="radio-group-compact">
-                                <label><input type="radio" name="preference" value="0"> Meat-based</label>
-                                <label><input type="radio" name="preference" value="1"> Plant-based</label>
-                            </div>
-                        </div>
-                        <button type="button" id="save-user-info-btn" class="btn-primary" style="width: 100%; margin-top: 4px;">Save</button>
-                    </form>
-                </div>
-
-            </aside>
-
-            <!-- Main chat area -->
-            <section class="chatbot-main">
-                <div class="chat-header">
-                    <h2>Food Intake Tracker</h2>
-                    <p>Tell me what you eat and I'll track your nutrition</p>
-                </div>
-
-                <div class="messages-container" id="messages-container">
-                    <div class="message bot-message">
-                        <div class="message-content">
-                            <p>Hello! 👋 I'm your nutrition assistant. Here's how to use me:</p>
-                            <p><strong>Step 1:</strong> Fill in your personal info on the left (optional for tracking, required for recommendations)</p>
-                            <p><strong>Step 2:</strong> Tell me what you ate! Examples: "100g chicken breast" or "1 medium apple"</p>
-                            <p><strong>Step 3:</strong> Click "Get Recommendations" to see your nutrition plan</p>
-                            <p>Let's get started! 🍽️</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="input-area">
-                    <form id="food-input-form" class="food-input-form">
-                        <input 
-                            type="text" 
-                            id="food-input" 
-                            placeholder="What did you eat? (e.g., 100g chicken breast, 1 apple)"
-                            autocomplete="off"
-                        >
-                        <button type="submit" class="btn-send">Send</button>
-                    </form>
-                    <div class="input-hint">Press Enter or click Send</div>
-                </div>
+                    <div id="dashboard-intake-list" class="timeline-list"></div>
+                </article>
             </section>
+
+            <section id="page-log" class="page">
+                <div class="page-head">
+                    <h1>Log Intake</h1>
+                    <p>All intake methods feed one unified timeline with edit, undo, redo, and delete.</p>
+                </div>
+
+                <div class="tabs" role="tablist">
+                    <button class="tab active" data-log-tab="food" role="tab">Food Name</button>
+                    <button class="tab" data-log-tab="macros" role="tab">Direct Macros</button>
+                    <button class="tab" data-log-tab="image" role="tab">Food Image</button>
+                </div>
+
+                <section class="tab-panel active" id="tab-food">
+                    <form id="food-search-form" class="panel-form">
+                        <label for="food-search-input">Food input (single or multiple, comma-separated)</label>
+                        <div class="inline-form-row">
+                            <input id="food-search-input" type="text" placeholder="e.g., 120g chicken breast, 1 apple, half avocado" autocomplete="off">
+                            <button type="submit" class="btn-primary">Parse & Add</button>
+                        </div>
+                    </form>
+                    <div id="food-search-preview" class="result-preview"></div>
+                </section>
+
+                <section class="tab-panel" id="tab-macros">
+                    <form id="direct-macro-form" class="panel-form">
+                        <p class="hint">Positive values add intake. Negative values correct previous intake.</p>
+                        <div class="macro-grid">
+                            <label>Carbs (g)
+                                <input type="number" step="0.1" id="macro-carbs" placeholder="+30 or -15">
+                            </label>
+                            <label>Protein (g)
+                                <input type="number" step="0.1" id="macro-protein" placeholder="+20 or -10">
+                            </label>
+                            <label>Fat (g)
+                                <input type="number" step="0.1" id="macro-fat" placeholder="+10 or -5">
+                            </label>
+                            <label>Calories (kcal) optional
+                                <input type="number" step="0.1" id="macro-calories" placeholder="Optional">
+                            </label>
+                        </div>
+                        <div class="inline-form-row">
+                            <button type="button" id="preview-macro" class="btn-secondary">Preview Delta</button>
+                            <button type="submit" class="btn-primary">Save Macro Entry</button>
+                        </div>
+                    </form>
+                    <div id="macro-preview" class="result-preview"></div>
+                </section>
+
+                <section class="tab-panel" id="tab-image">
+                    <form id="image-analysis-form" class="panel-form" enctype="multipart/form-data">
+                        <label for="meal-image">Upload meal image</label>
+                        <input type="file" id="meal-image" accept=".jpg,.jpeg,.png,.webp,.jfif,.bmp,.tif,.tiff,image/*">
+                        <div id="image-upload-preview" class="image-upload-preview" hidden>
+                            <img id="image-upload-preview-img" alt="Uploaded meal preview">
+                        </div>
+                        <label for="image-hints">Optional food hints</label>
+                        <input type="text" id="image-hints" placeholder="e.g., rice, chicken, broccoli">
+                        <label for="image-container-size">Optional container diameter (cm)</label>
+                        <input type="number" id="image-container-size" step="0.1" placeholder="26">
+                        <div class="inline-form-row">
+                            <button type="submit" class="btn-primary">Analyze Image</button>
+                        </div>
+                    </form>
+                    <div id="image-analysis-result" class="result-preview"></div>
+                </section>
+
+                <article class="card">
+                    <div class="card-head-row">
+                        <h3>Unified Intake Timeline</h3>
+                        <div class="stack-actions">
+                            <button type="button" id="undo-action" class="btn-secondary slim">Undo</button>
+                            <button type="button" id="redo-action" class="btn-secondary slim">Redo</button>
+                            <button type="button" id="clear-day" class="btn-secondary slim danger">Clear Day</button>
+                        </div>
+                    </div>
+                    <div id="intake-timeline" class="timeline-list"></div>
+                </article>
+            </section>
+
+            <section id="page-recommendations" class="page">
+                <div class="page-head">
+                    <h1>Recommendations</h1>
+                    <p>Goal, macro gaps, custom recipes, suggested combinations, and 3D model outputs.</p>
+                    <div id="recommendation-loading-indicator" class="recommendation-loading-indicator" hidden>
+                        <span class="loading-dot" aria-hidden="true"></span>
+                        <span id="recommendation-loading-text">Loading recommendations...</span>
+                    </div>
+                    <div id="recommendation-refresh-hint" class="recommendation-refresh-hint" hidden></div>
+                </div>
+
+                <article class="card" id="recommendation-energy-card">
+                    <h3>1. Daily Energy Goal</h3>
+                    <div id="energy-goal-view">No recommendation yet.</div>
+                </article>
+
+                <article class="card" id="recommendation-gap-card">
+                    <h3>2. Nutrient Gap Table</h3>
+                    <div id="nutrient-gap-view">No recommendation yet.</div>
+                </article>
+
+                <article class="card" id="custom-recipe-card">
+                    <div class="card-head-row">
+                        <h3>3. Build Recipes From Foods You Want</h3>
+                        <button type="button" id="toggle-custom-recipe" class="btn-secondary slim">Hide</button>
+                    </div>
+                    <div id="custom-recipe-status" class="muted" hidden></div>
+                    <div id="custom-recipe-content">
+                        <p class="hint">Recipe 1 uses all requested foods. Recipe 2-4 may use subsets for better deficit fit.</p>
+                        <div class="inline-form-row">
+                            <input type="text" id="custom-food-text" placeholder="e.g., chicken breast, broccoli, noodles">
+                            <button type="button" id="run-custom-recipes" class="btn-primary">Generate 4 Recipes</button>
+                        </div>
+                        <div id="custom-recipes-runtime-status" class="runtime-status" hidden></div>
+                        <div id="custom-recipes-view" class="result-preview"></div>
+                    </div>
+                </article>
+
+                <article class="card" id="suggested-combos-card">
+                    <h3>4. Suggested Food Combinations</h3>
+                    <div id="suggested-combos-view">No recommendation yet.</div>
+                </article>
+
+                <article class="card" id="printing-models-card">
+                    <h3>5. 3D Food Printing Models</h3>
+                    <div id="printing-models-view">No printable outputs yet.</div>
+                </article>
+            </section>
+
+            <section id="page-calendar" class="page">
+                <div class="page-head">
+                    <h1>Calendar</h1>
+                    <p>Daily intake history by date with recommendation snapshot metadata.</p>
+                </div>
+                <article class="card">
+                    <div class="calendar-nav">
+                        <button id="calendar-prev" class="btn-secondary slim">Prev</button>
+                        <strong id="calendar-month-label"></strong>
+                        <button id="calendar-next" class="btn-secondary slim">Next</button>
+                    </div>
+                    <div class="calendar-grid" id="calendar-grid"></div>
+                </article>
+                <article class="card">
+                    <h3>Day Detail</h3>
+                    <div id="calendar-day-detail">Select a date to inspect saved totals and recommendation snapshot.</div>
+                </article>
+            </section>
+
+            <section id="page-users" class="page">
+                <div class="page-head">
+                    <h1>Users / Profiles</h1>
+                    <p>Create, switch, and edit the active user profile in place. Active user updates all pages instantly.</p>
+                </div>
+                <article class="card">
+                    <h3>Create User</h3>
+                    <div class="inline-form-row">
+                        <input type="text" id="create-user-name" placeholder="Enter user name">
+                        <button type="button" id="create-user-submit" class="btn-primary">Create</button>
+                    </div>
+                </article>
+                <article class="card">
+                    <h3>User List</h3>
+                    <div id="user-list-view" class="user-list-grid"></div>
+                    <p class="muted">Profile dropdown appears directly below the selected account.</p>
+                </article>
+            </section>
+
+            <section id="page-history" class="page">
+                <div class="page-head">
+                    <h1>History / Records</h1>
+                    <p>Complete entry history for the active user and active day.</p>
+                </div>
+                <article class="card">
+                    <h3>Recorded Entries</h3>
+                    <div id="history-list" class="timeline-list"></div>
+                </article>
+            </section>
+
+            <section id="page-settings" class="page">
+                <div class="page-head">
+                    <h1>Settings</h1>
+                    <p>Frontend-only preferences for safety and usability.</p>
+                </div>
+                <article class="card">
+                    <div class="setting-row">
+                        <label for="autosave-toggle">Autosave Daily Intake to backend</label>
+                        <input type="checkbox" id="autosave-toggle" checked>
+                    </div>
+                    <div class="setting-row">
+                        <label for="confirm-delete-toggle">Confirm before deleting entry</label>
+                        <input type="checkbox" id="confirm-delete-toggle" checked>
+                    </div>
+                </article>
+            </section>
+        </main>
+
+        <aside class="insight-panel">
+            <article class="insight-card sticky">
+                <h3>Progress vs Target</h3>
+                <div id="target-progress-view">Fill profile and generate recommendation to show target deltas.</div>
+            </article>
+        </aside>
+        <button type="button" id="toggle-right-panel" class="right-collapse-handle" aria-label="Toggle insights panel" title="Hide insights"></button>
+    </div>
+
+    <div class="modal" id="entry-edit-modal" hidden>
+        <div class="modal-card">
+            <div class="modal-head">
+                <h3>Edit Entry</h3>
+                <button type="button" id="close-entry-modal" class="btn-secondary slim">Close</button>
+            </div>
+            <div id="entry-edit-content"></div>
         </div>
-    </main>
+    </div>
 
-    <script src="{{ url_for('static', filename='chatbot.js', v='20260305b') }}"></script>
+    <div class="modal" id="food-preview-edit-modal" hidden>
+        <div class="modal-card">
+            <div class="modal-head">
+                <h3>Review & Edit</h3>
+                <button type="button" id="close-food-preview-modal" class="btn-secondary slim" title="Cancel and close">Cancel</button>
+            </div>
+            <div id="food-preview-edit-content" class="food-preview-edit-form">
+                <div class="preview-food-label" id="preview-food-label"></div>
+                <div class="nutrition-grid">
+                    <label for="preview-calories">Calories (kcal)
+                        <input type="number" step="0.1" id="preview-calories" placeholder="0" min="0">
+                    </label>
+                    <label for="preview-carbs">Carbs (g)
+                        <input type="number" step="0.1" id="preview-carbs" placeholder="0" min="0">
+                    </label>
+                    <label for="preview-protein">Protein (g)
+                        <input type="number" step="0.1" id="preview-protein" placeholder="0" min="0">
+                    </label>
+                    <label for="preview-fat">Fat (g)
+                        <input type="number" step="0.1" id="preview-fat" placeholder="0" min="0">
+                    </label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="confirm-food-after-edit" class="btn-primary">Confirm Add</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Confirmation Modal -->
+    <div class="modal" id="confirmation-modal" hidden>
+        <div class="modal-card">
+            <div class="modal-head">
+                <h3 id="confirmation-title">Confirm Action</h3>
+            </div>
+            <p id="confirmation-message" style="margin: 16px 0; color: var(--ui-text);">Are you sure?</p>
+            <div class="modal-actions">
+                <button type="button" id="confirmation-cancel" class="btn-secondary">Cancel</button>
+                <button type="button" id="confirmation-confirm" class="btn-primary danger">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="{{ url_for('static', filename='chatbot.js', v='ui-rebuild-9') }}"></script>
 </body>
-
 </html>

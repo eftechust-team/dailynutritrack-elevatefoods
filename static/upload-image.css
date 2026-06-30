@@ -4,6 +4,19 @@
 	gap: 16px;
 }
 
+.input-label {
+	margin-top: 4px;
+}
+
+.error-text {
+	padding: 10px 12px;
+	border: 1px solid rgba(220, 38, 38, 0.35);
+	background: rgba(220, 38, 38, 0.08);
+	color: #b91c1c;
+	border-radius: 10px;
+	font-weight: 600;
+}
+
 .dropzone {
 	position: relative;
 	border: 1.5px dashed var(--border);
@@ -25,6 +38,22 @@
 	inset: 0;
 	opacity: 0;
 	cursor: pointer;
+}
+
+.selected-image-preview {
+	padding: 10px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background: rgba(255, 255, 255, 0.03);
+}
+
+.selected-image-preview img {
+	width: 100%;
+	max-height: 300px;
+	object-fit: contain;
+	border-radius: 10px;
+	border: 1px solid var(--border);
+	background: #fff;
 }
 
 .muted {

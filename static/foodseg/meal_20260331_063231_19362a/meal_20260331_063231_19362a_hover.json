@@ -1,0 +1,94 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "tomato",
+            "weight_g": 236.47,
+            "calories": 42.56,
+            "carbs": 9.46,
+            "protein": 2.36,
+            "fat": 0.47,
+            "bbox": {
+                "x_min": 179,
+                "y_min": 211,
+                "x_max": 693,
+                "y_max": 510
+            }
+        },
+        {
+            "id": 2,
+            "food_name": "mixed vegetable salad",
+            "weight_g": 177.64,
+            "calories": 295.72,
+            "carbs": 34.41,
+            "protein": 11.91,
+            "fat": 13.7,
+            "bbox": {
+                "x_min": 166,
+                "y_min": 23,
+                "x_max": 692,
+                "y_max": 390
+            }
+        },
+        {
+            "id": 3,
+            "food_name": "broccoli",
+            "weight_g": 57.94,
+            "calories": 19.7,
+            "carbs": 4.06,
+            "protein": 1.74,
+            "fat": 0.23,
+            "bbox": {
+                "x_min": 207,
+                "y_min": 88,
+                "x_max": 607,
+                "y_max": 257
+            }
+        },
+        {
+            "id": 4,
+            "food_name": "onion",
+            "weight_g": 5.32,
+            "calories": 2.13,
+            "carbs": 0.48,
+            "protein": 0.05,
+            "fat": 0.01,
+            "bbox": {
+                "x_min": 240,
+                "y_min": 369,
+                "x_max": 421,
+                "y_max": 480
+            }
+        },
+        {
+            "id": 5,
+            "food_name": "tomato",
+            "weight_g": 3.99,
+            "calories": 0.72,
+            "carbs": 0.16,
+            "protein": 0.04,
+            "fat": 0.01,
+            "bbox": {
+                "x_min": 192,
+                "y_min": 287,
+                "x_max": 303,
+                "y_max": 383
+            }
+        },
+        {
+            "id": 6,
+            "food_name": "mixed vegetable salad",
+            "weight_g": 4.01,
+            "calories": 6.68,
+            "carbs": 0.78,
+            "protein": 0.27,
+            "fat": 0.31,
+            "bbox": {
+                "x_min": 230,
+                "y_min": 447,
+                "x_max": 634,
+                "y_max": 514
+            }
+        }
+    ]
+}

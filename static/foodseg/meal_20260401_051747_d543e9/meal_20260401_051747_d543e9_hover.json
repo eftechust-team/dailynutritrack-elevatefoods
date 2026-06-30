@@ -1,0 +1,55 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "braised beef noodle bowl",
+            "weight_g": 225.0,
+            "calories": 374.58,
+            "carbs": 43.59,
+            "protein": 15.08,
+            "fat": 17.35,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 449,
+                "y_max": 299
+            },
+            "confidence": 0.94
+        },
+        {
+            "id": 2,
+            "food_name": "bok choy",
+            "weight_g": 55.0,
+            "calories": 91.56,
+            "carbs": 10.65,
+            "protein": 3.69,
+            "fat": 4.24,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 449,
+                "y_max": 299
+            },
+            "confidence": 0.98
+        },
+        {
+            "id": 3,
+            "food_name": "pineapple juice",
+            "weight_g": 240.0,
+            "calories": 399.55,
+            "carbs": 46.49,
+            "protein": 16.09,
+            "fat": 18.5,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 449,
+                "y_max": 299
+            },
+            "confidence": 0.92
+        }
+    ]
+}

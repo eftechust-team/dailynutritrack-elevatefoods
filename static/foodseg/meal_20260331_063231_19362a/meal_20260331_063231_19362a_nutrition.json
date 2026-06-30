@@ -1,0 +1,60 @@
+{
+    "total_volume_cm3": 765.71,
+    "total_weight_g": 485.37,
+    "calories": 367.51,
+    "protein": 16.37,
+    "fat": 14.73,
+    "carbs": 49.35,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 73,
+            "food_name": "tomato",
+            "volume_cm3": 400.77,
+            "weight_g": 240.46,
+            "calories": 43.28,
+            "protein": 2.4,
+            "fat": 0.48,
+            "carbs": 9.62,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 2,
+            "food_name": "mixed vegetable salad",
+            "volume_cm3": 259.5,
+            "weight_g": 181.65,
+            "calories": 302.4,
+            "protein": 12.18,
+            "fat": 14.01,
+            "carbs": 35.19,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 87,
+            "food_name": "broccoli",
+            "volume_cm3": 96.57,
+            "weight_g": 57.94,
+            "calories": 19.7,
+            "protein": 1.74,
+            "fat": 0.23,
+            "carbs": 4.06,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 93,
+            "food_name": "onion",
+            "volume_cm3": 8.87,
+            "weight_g": 5.32,
+            "calories": 2.13,
+            "protein": 0.05,
+            "fat": 0.01,
+            "carbs": 0.48,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ]
+}

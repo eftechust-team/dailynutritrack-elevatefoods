@@ -1,0 +1,61 @@
+{
+    "total_volume_cm3": 621.43,
+    "total_weight_g": 435.0,
+    "calories": 724.18,
+    "protein": 29.16,
+    "fat": 33.54,
+    "carbs": 84.26,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 4,
+            "food_name": "pineapple juice",
+            "volume_cm3": 285.71,
+            "weight_g": 200.0,
+            "calories": 332.96,
+            "protein": 13.41,
+            "fat": 15.42,
+            "carbs": 38.74,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 1,
+            "food_name": "wheat noodle",
+            "volume_cm3": 178.57,
+            "weight_g": 125.0,
+            "calories": 208.1,
+            "protein": 8.38,
+            "fat": 9.64,
+            "carbs": 24.21,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 2,
+            "food_name": "braised beef",
+            "volume_cm3": 114.29,
+            "weight_g": 80.0,
+            "calories": 133.18,
+            "protein": 5.36,
+            "fat": 6.17,
+            "carbs": 15.5,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 3,
+            "food_name": "bok choy",
+            "volume_cm3": 42.86,
+            "weight_g": 30.0,
+            "calories": 49.94,
+            "protein": 2.01,
+            "fat": 2.31,
+            "carbs": 5.81,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ],
+    "analysis_source": "doubao-seed-2-0-mini-260215"
+}

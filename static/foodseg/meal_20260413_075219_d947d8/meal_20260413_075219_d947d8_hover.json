@@ -1,0 +1,123 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "chicken breast",
+            "weight_g": 170.0,
+            "calories": 200.6,
+            "carbs": 1.02,
+            "protein": 41.82,
+            "fat": 3.23,
+            "cutout_image": "/static/foodseg/meal_20260413_075219_d947d8/cutouts/part_1.png",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 859,
+                "y_max": 572
+            },
+            "confidence": 0.95
+        },
+        {
+            "id": 2,
+            "food_name": "cherry tomato",
+            "weight_g": 120.0,
+            "calories": 193.58,
+            "carbs": 22.32,
+            "protein": 7.91,
+            "fat": 8.98,
+            "cutout_image": "/static/foodseg/meal_20260413_075219_d947d8/cutouts/part_2.png",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 859,
+                "y_max": 572
+            },
+            "confidence": 0.93
+        },
+        {
+            "id": 3,
+            "food_name": "cucumber",
+            "weight_g": 55.0,
+            "calories": 8.8,
+            "carbs": 2.2,
+            "protein": 0.55,
+            "fat": 0.06,
+            "cutout_image": "/static/foodseg/meal_20260413_075219_d947d8/cutouts/part_3.png",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 859,
+                "y_max": 572
+            },
+            "confidence": 0.9
+        },
+        {
+            "id": 4,
+            "food_name": "red cabbage",
+            "weight_g": 40.0,
+            "calories": 64.53,
+            "carbs": 7.44,
+            "protein": 2.64,
+            "fat": 2.99,
+            "cutout_image": "/static/foodseg/meal_20260413_075219_d947d8/cutouts/part_4.png",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 859,
+                "y_max": 572
+            },
+            "confidence": 0.88
+        },
+        {
+            "id": 5,
+            "food_name": "leafy green",
+            "weight_g": 65.0,
+            "calories": 104.85,
+            "carbs": 12.09,
+            "protein": 4.28,
+            "fat": 4.87,
+            "cutout_image": "/static/foodseg/meal_20260413_075219_d947d8/cutouts/part_5.png",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 859,
+                "y_max": 572
+            },
+            "confidence": 0.92
+        },
+        {
+            "id": 6,
+            "food_name": "roasted seed mix",
+            "weight_g": 30.0,
+            "calories": 48.39,
+            "carbs": 5.58,
+            "protein": 1.98,
+            "fat": 2.25,
+            "cutout_image": "/static/foodseg/meal_20260413_075219_d947d8/cutouts/part_6.png",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 859,
+                "y_max": 572
+            },
+            "confidence": 0.87
+        },
+        {
+            "id": 7,
+            "food_name": "herb dressing",
+            "weight_g": 45.0,
+            "calories": 72.59,
+            "carbs": 8.37,
+            "protein": 2.97,
+            "fat": 3.37,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 859,
+                "y_max": 572
+            },
+            "confidence": 0.86
+        }
+    ]
+}

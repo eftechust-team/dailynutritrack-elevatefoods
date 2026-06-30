@@ -1,0 +1,73 @@
+{
+    "total_volume_cm3": 721.42,
+    "total_weight_g": 505.0,
+    "calories": 840.72,
+    "protein": 33.86,
+    "fat": 38.93,
+    "carbs": 97.83,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 1,
+            "food_name": "Yangzhou fried rice",
+            "volume_cm3": 285.71,
+            "weight_g": 200.0,
+            "calories": 332.96,
+            "protein": 13.41,
+            "fat": 15.42,
+            "carbs": 38.74,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 2,
+            "food_name": "Kimchi fried rice",
+            "volume_cm3": 257.14,
+            "weight_g": 180.0,
+            "calories": 299.66,
+            "protein": 12.07,
+            "fat": 13.88,
+            "carbs": 34.87,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 4,
+            "food_name": "Spicy pickled radish",
+            "volume_cm3": 64.29,
+            "weight_g": 45.0,
+            "calories": 74.92,
+            "protein": 3.02,
+            "fat": 3.47,
+            "carbs": 8.72,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 3,
+            "food_name": "Pickled mustard green",
+            "volume_cm3": 57.14,
+            "weight_g": 40.0,
+            "calories": 66.59,
+            "protein": 2.68,
+            "fat": 3.08,
+            "carbs": 7.75,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 5,
+            "food_name": "Sesame garlic pickled cucumber",
+            "volume_cm3": 57.14,
+            "weight_g": 40.0,
+            "calories": 66.59,
+            "protein": 2.68,
+            "fat": 3.08,
+            "carbs": 7.75,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ],
+    "analysis_source": "doubao-seed-2-0-mini-260215"
+}

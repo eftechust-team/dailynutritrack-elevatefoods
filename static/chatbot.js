@@ -1,2244 +1,2140 @@
-// Chatbot JavaScript - handles food input, API calls, and UI updates
+﻿(() => {
+  const API = {
+    searchFood: '/api/search-food',
+    analyzeImage: '/api/analyze-image-nutrition',
+    calculateRecommendation: '/api/calculate-recommendation',
+    calculateCustomRecipes: '/api/calculate-custom-recipes',
+    updateImageLabel: '/api/update-image-food-label',
+    users: '/api/user-records',
+    userDetail: (id) => `/api/user-records/${encodeURIComponent(id)}`,
+    dailyIntake: (id) => `/api/daily-intake/${encodeURIComponent(id)}`,
+    downloadStl: (name) => `/download-stl/${encodeURIComponent(name)}`,
+    downloadObj: (name) => `/download-obj/${encodeURIComponent(name)}`,
+    downloadStlZip: '/download-stl-zip',
+    health: '/health',
+  };
 
-class NutritionChatbot {
+  const LS_KEYS = {
+    activeUserId: 'ui.activeUserId',
+    settings: 'ui.settings',
+  };
+
+  const todayKey = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  const deepCopy = (v) => JSON.parse(JSON.stringify(v));
+  const round = (n, d = 2) => Number((Number(n || 0)).toFixed(d));
+  
+  const formatNutrition = (calories, carbs, protein, fat) => {
+    return `${round(calories, 1)} kcal | Carbs ${round(carbs, 2)}g | Protein ${round(protein, 2)}g | Fat ${round(fat, 2)}g`;
+  };
+
+  const shortId = (id) => {
+    const v = String(id || '').trim();
+    if (v.length <= 12) return v;
+    return `${v.slice(0, 8)}...${v.slice(-4)}`;
+  };
+  
+  const DIET_SCALE = [
+    [0.50 / 4.1, 0.20 / 4.1, 0.30 / 8.8],
+    [0.60 / 4.1, 0.20 / 4.1, 0.20 / 8.8],
+    [0.20 / 4.1, 0.30 / 4.1, 0.50 / 8.8],
+    [0.28 / 4.1, 0.39 / 4.1, 0.33 / 8.8],
+  ];
+
+  class NutritionUI {
     constructor() {
-        this.currentUserId = null;
-        this.currentUserName = 'Guest';
-        this.allUsers = [];
-        this.dailyNutrition = {
-            carbs: 0,
-            protein: 0,
-            fat: 0,
-            calories: 0
-        };
-        this.userInfo = {};
-        this.userRecordId = null;
-        this.conversationHistory = [];
-        this._entryCounter = 0;
-        this._undoActions = [];
-        this._recipePlanners = {};
-        this.init();
+      this.state = {
+        users: [],
+        activeUserId: localStorage.getItem(LS_KEYS.activeUserId) || '',
+        activeUser: null,
+        profile: {},
+        entriesByDate: {},
+        selectedDate: todayKey(),
+        recommendation: null,
+          recommendationStatus: '',
+        customRecipes: null,
+        pendingFoodPreview: null,
+        pendingImagePreview: null,
+        calendarMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+        historyUndo: [],
+        historyRedo: [],
+        settings: {
+          autosave: true,
+          confirmDelete: true,
+          sidebarCollapsed: false,
+          insightCollapsed: false,
+          ...JSON.parse(localStorage.getItem(LS_KEYS.settings) || '{}'),
+        },
+        recommendationRequestKey: '',
+        recommendationInFlight: null,
+        activeUserSyncToken: 0,
+      };
+
+      this.bindDom();
+      this.bindEvents();
+      this.boot();
     }
 
-    init() {
-        // DOM elements
-        this.messagesContainer = document.getElementById('messages-container');
-        this.foodInput = document.getElementById('food-input');
-        this.foodInputForm = document.getElementById('food-input-form');
-        this.userInfoForm = document.getElementById('user-info-form');
-        this.analyzeBtn = document.getElementById('analyze-btn');
-        this.undoBtn = document.getElementById('undo-btn');
-        this.clearBtn = document.getElementById('clear-btn');
-        this.saveUserInfoBtn = document.getElementById('save-user-info-btn');
-        this.switchUserBtn = document.getElementById('switch-user-btn');
-        this.currentUserDisplay = document.getElementById('current-user-name');
-        this.calendarBtn = document.getElementById('calendar-btn');
-        this.calendarModal = document.getElementById('calendar-modal');
-        this.closeCalendarModalBtn = document.getElementById('close-calendar-modal');
-        this.clearConfirmModal = document.getElementById('clear-confirm-modal');
-        this.clearConfirmBtn = document.getElementById('clear-confirm-btn');
-        this.clearCancelBtn = document.getElementById('clear-cancel-btn');
-        this.userModal = document.getElementById('user-modal');
-        this.closeUserModalBtn = document.getElementById('close-user-modal');
-        this.createUserBtn = document.getElementById('create-user-btn');
-        this.newUserNameInput = document.getElementById('new-user-name');
-        this.userList = document.getElementById('user-list');
-        this.defaultMessagesHtml = this.messagesContainer ? this.messagesContainer.innerHTML : '';
+    bindDom() {
+      this.navItems = Array.from(document.querySelectorAll('.nav-item'));
+      this.pages = Array.from(document.querySelectorAll('.page'));
+      this.tabs = Array.from(document.querySelectorAll('.tab'));
+      this.tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
 
-        // Counters (may not exist if stat boxes were removed)
-        this.carbsDisplay = document.getElementById('carbs-total');
-        this.proteinDisplay = document.getElementById('protein-total');
-        this.fatDisplay = document.getElementById('fat-total');
-        this.caloriesDisplay = document.getElementById('calories-total');
-        this.intakeProgress = document.getElementById('intake-progress');
+      this.activeUserName = document.getElementById('active-user-name');
+      this.toggleLeftNavBtn = document.getElementById('toggle-left-nav');
+      this.toggleRightPanelBtn = document.getElementById('toggle-right-panel');
+      this.openUserManagerBtn = document.getElementById('open-user-manager');
+      this.quickSaveDayBtn = document.getElementById('quick-save-day');
 
-        // Event listeners
-        this.foodInputForm.addEventListener('submit', (e) => this.handleFoodInput(e));
-        this.userInfoForm.addEventListener('change', () => this.updateUserInfo());
-        if (this.saveUserInfoBtn) {
-            this.saveUserInfoBtn.addEventListener('click', () => this.handleSaveUserInfo());
-        }
-        this.analyzeBtn.addEventListener('click', () => this.handleAnalyze());
-        this.undoBtn.addEventListener('click', () => this.undoLast());
-        this.clearBtn.addEventListener('click', () => this.clearAll());
-        this.clearConfirmBtn.addEventListener('click', () => this._confirmClear());
-        this.clearCancelBtn.addEventListener('click', () => this._closeClearModal());
-        this.clearConfirmModal.addEventListener('click', (e) => { if (e.target === this.clearConfirmModal) this._closeClearModal(); });
-        this.switchUserBtn.addEventListener('click', () => this.openUserModal());
-        this.closeUserModalBtn.addEventListener('click', () => this.closeUserModal());
-        this.createUserBtn.addEventListener('click', () => this.handleCreateUser());
-        this.calendarBtn.addEventListener('click', () => this.openCalendar());
-        this.closeCalendarModalBtn.addEventListener('click', () => this.closeCalendar());
-        this.calendarModal.addEventListener('click', (e) => {
-            if (e.target === this.calendarModal) this.closeCalendar();
+      this.summary = {
+        calories: document.getElementById('summary-calories'),
+        carbs: document.getElementById('summary-carbs'),
+        protein: document.getElementById('summary-protein'),
+        fat: document.getElementById('summary-fat'),
+      };
+
+      this.targetProgressView = document.getElementById('target-progress-view');
+      this.dashboardUserSummary = document.getElementById('dashboard-user-summary');
+      this.dashboardIntakeList = document.getElementById('dashboard-intake-list');
+      this.recommendationSnapshot = document.getElementById('recommendation-snapshot-content');
+      this.goRecommendations = document.getElementById('go-recommendations');
+      this.goCalendar = document.getElementById('go-calendar');
+
+      this.foodSearchForm = document.getElementById('food-search-form');
+      this.foodSearchInput = document.getElementById('food-search-input');
+      this.foodSearchPreview = document.getElementById('food-search-preview');
+
+      this.directMacroForm = document.getElementById('direct-macro-form');
+      this.previewMacroBtn = document.getElementById('preview-macro');
+      this.macroPreview = document.getElementById('macro-preview');
+      this.macroFields = {
+        carbs: document.getElementById('macro-carbs'),
+        protein: document.getElementById('macro-protein'),
+        fat: document.getElementById('macro-fat'),
+        calories: document.getElementById('macro-calories'),
+      };
+
+      this.imageAnalysisForm = document.getElementById('image-analysis-form');
+      this.mealImage = document.getElementById('meal-image');
+      this.imageUploadPreview = document.getElementById('image-upload-preview');
+      this.imageUploadPreviewImg = document.getElementById('image-upload-preview-img');
+      this.imageHints = document.getElementById('image-hints');
+      this.imageContainerSize = document.getElementById('image-container-size');
+      this.imageAnalysisResult = document.getElementById('image-analysis-result');
+
+      this.timeline = document.getElementById('intake-timeline');
+      this.historyList = document.getElementById('history-list');
+      this.undoBtn = document.getElementById('undo-action');
+      this.redoBtn = document.getElementById('redo-action');
+      this.clearDayBtn = document.getElementById('clear-day');
+
+      this.runRecommendationBtn = document.getElementById('run-recommendation');
+      this.recommendationLoadingIndicator = document.getElementById('recommendation-loading-indicator');
+      this.recommendationLoadingText = document.getElementById('recommendation-loading-text');
+      this.recommendationRefreshHint = document.getElementById('recommendation-refresh-hint');
+      this.energyGoalView = document.getElementById('energy-goal-view');
+      this.nutrientGapView = document.getElementById('nutrient-gap-view');
+      this.suggestedCombosView = document.getElementById('suggested-combos-view');
+      this.printingModelsView = document.getElementById('printing-models-view');
+
+      this.customFoodText = document.getElementById('custom-food-text');
+      this.runCustomRecipesBtn = document.getElementById('run-custom-recipes');
+      this.customRecipesRuntimeStatus = document.getElementById('custom-recipes-runtime-status');
+      this.customRecipesView = document.getElementById('custom-recipes-view');
+      this.customRecipeCard = document.getElementById('custom-recipe-card');
+      this.customRecipeContent = document.getElementById('custom-recipe-content');
+      this.customRecipeStatus = document.getElementById('custom-recipe-status');
+      this.toggleCustomRecipeBtn = document.getElementById('toggle-custom-recipe');
+
+      this.calendarPrev = document.getElementById('calendar-prev');
+      this.calendarNext = document.getElementById('calendar-next');
+      this.calendarMonthLabel = document.getElementById('calendar-month-label');
+      this.calendarGrid = document.getElementById('calendar-grid');
+      this.calendarDayDetail = document.getElementById('calendar-day-detail');
+
+      this.createUserName = document.getElementById('create-user-name');
+      this.createUserSubmit = document.getElementById('create-user-submit');
+      this.userListView = document.getElementById('user-list-view');
+      this.profileDropdown = document.getElementById('profile-dropdown');
+      this.profileForm = document.getElementById('profile-form');
+      this.profileOwnerLabel = document.getElementById('profile-owner-label');
+      this.saveProfileBtn = document.getElementById('save-profile');
+
+      this.autosaveToggle = document.getElementById('autosave-toggle');
+      this.confirmDeleteToggle = document.getElementById('confirm-delete-toggle');
+
+      this.entryEditModal = document.getElementById('entry-edit-modal');
+      this.entryEditContent = document.getElementById('entry-edit-content');
+      this.closeEntryModal = document.getElementById('close-entry-modal');
+
+      this.foodPreviewEditModal = document.getElementById('food-preview-edit-modal');
+      this.foodPreviewEditContent = document.getElementById('food-preview-edit-content');
+      this.closeFoodPreviewModal = document.getElementById('close-food-preview-modal');
+      this.previewFoodLabel = document.getElementById('preview-food-label');
+      this.previewCalories = document.getElementById('preview-calories');
+      this.previewCarbs = document.getElementById('preview-carbs');
+      this.previewProtein = document.getElementById('preview-protein');
+      this.previewFat = document.getElementById('preview-fat');
+      this.confirmFoodAfterEdit = document.getElementById('confirm-food-after-edit');
+
+      this.confirmationModal = document.getElementById('confirmation-modal');
+      this.confirmationTitle = document.getElementById('confirmation-title');
+      this.confirmationMessage = document.getElementById('confirmation-message');
+      this.confirmationCancelBtn = document.getElementById('confirmation-cancel');
+      this.confirmationConfirmBtn = document.getElementById('confirmation-confirm');
+      this.toastContainer = document.getElementById('toast-container');
+    }
+
+    bindEvents() {
+      this.navItems.forEach((btn) => btn.addEventListener('click', () => this.openPage(btn.dataset.page)));
+      this.tabs.forEach((btn) => btn.addEventListener('click', () => this.openTab(btn.dataset.logTab)));
+
+      document.querySelectorAll('[data-jump-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          this.openPage('log');
+          this.openTab(btn.dataset.jumpTab);
         });
-        this.userModal.addEventListener('click', (e) => {
-            if (e.target === this.userModal) this.closeUserModal();
-        });
+      });
 
-        // Load saved data and initialize users
-        this.loadSavedData();
-        this.loadAllUsers();
+      this.openUserManagerBtn.addEventListener('click', () => this.openPage('users'));
+      this.quickSaveDayBtn.addEventListener('click', () => this.saveDayToBackend());
+      this.toggleLeftNavBtn.addEventListener('click', () => this.toggleSidebar());
+      this.toggleRightPanelBtn.addEventListener('click', () => this.toggleInsightPanel());
+      this.goRecommendations.addEventListener('click', () => this.openPage('recommendations'));
+      this.goCalendar.addEventListener('click', () => this.openPage('calendar'));
+
+      this.foodSearchForm.addEventListener('submit', (e) => this.handleFoodSearch(e));
+
+      this.previewMacroBtn.addEventListener('click', () => this.previewMacroDelta());
+      this.directMacroForm.addEventListener('submit', (e) => this.handleMacroSubmit(e));
+
+      this.imageAnalysisForm.addEventListener('submit', (e) => this.handleImageAnalyze(e));
+      this.mealImage.addEventListener('change', () => this.renderUploadedImagePreview());
+
+      this.undoBtn.addEventListener('click', () => this.undo());
+      this.redoBtn.addEventListener('click', () => this.redo());
+      this.clearDayBtn.addEventListener('click', () => this.clearDay());
+
+      if (this.runRecommendationBtn) {
+        this.runRecommendationBtn.addEventListener('click', () => this.runRecommendation());
+      }
+      this.runCustomRecipesBtn.addEventListener('click', () => this.runCustomRecipes());
+      this.toggleCustomRecipeBtn.addEventListener('click', () => this.toggleCustomRecipeSection());
+
+      this.calendarPrev.addEventListener('click', () => this.shiftCalendar(-1));
+      this.calendarNext.addEventListener('click', () => this.shiftCalendar(1));
+
+      this.createUserSubmit.addEventListener('click', () => this.createUser());
+      if (this.saveProfileBtn) {
+        this.saveProfileBtn.addEventListener('click', () => this.saveProfile());
+      }
+
+      this.autosaveToggle.checked = !!this.state.settings.autosave;
+      this.confirmDeleteToggle.checked = !!this.state.settings.confirmDelete;
+      this.autosaveToggle.addEventListener('change', () => this.updateSettings());
+      this.confirmDeleteToggle.addEventListener('change', () => this.updateSettings());
+
+      this.closeEntryModal.addEventListener('click', () => this.closeEntryEditor());
+      this.entryEditModal.addEventListener('click', (e) => {
+        if (e.target === this.entryEditModal) this.closeEntryEditor();
+      });
+
+      this.closeFoodPreviewModal.addEventListener('click', () => this.closeFoodPreviewEditor());
+      this.foodPreviewEditModal.addEventListener('click', (e) => {
+        if (e.target === this.foodPreviewEditModal) this.closeFoodPreviewEditor();
+      });
+      this.confirmFoodAfterEdit.addEventListener('click', () => this.commitPendingFoodWithEdits());
+
+      this.confirmationCancelBtn.addEventListener('click', () => this.closeConfirmation());
+      this.confirmationConfirmBtn.addEventListener('click', () => this.confirmConfirmation());
+      this.confirmationModal.addEventListener('click', (e) => {
+        if (e.target === this.confirmationModal) this.closeConfirmation();
+      });
+
+      window.addEventListener('resize', () => this.handleWindowResize());
+    }
+
+    async boot() {
+      this.applySidebarState();
+      await this.loadUsers();
+      
+      // Auto-select latest used account if no active user is selected
+      if (!this.state.activeUser && this.state.users.length > 0) {
+        let latestUserId = null;
+        let latestTime = 0;
         
-        // Update button status based on loaded data
-        this.updateAnalyzeButtonStatus();
-    }
-
-    async loadAllUsers() {
-        try {
-            const response = await fetch('/api/user-records');
-            if (response.ok) {
-                const data = await response.json();
-                this.allUsers = data.records || [];
-                console.log('[MultiUser] Loaded users:', this.allUsers);
-                
-                // If no current user, show modal to create one
-                if (!this.currentUserId && this.allUsers.length === 0) {
-                    setTimeout(() => this.openUserModal(), 500);
-                }
-            }
-        } catch (err) {
-            console.error('[MultiUser] Failed to load users:', err);
+        for (const user of this.state.users) {
+          const timeStr = localStorage.getItem(`lastUserTime.${user.user_id}`);
+          const time = timeStr ? parseInt(timeStr, 10) : 0;
+          if (time > latestTime) {
+            latestTime = time;
+            latestUserId = user.user_id;
+          }
         }
-    }
-
-    loadSavedData() {
-        const savedUserRecordId = localStorage.getItem('userRecordId');
-        const savedCurrentUserId = localStorage.getItem('currentUserId');
-        const savedCurrentUserName = localStorage.getItem('currentUserName');
-
-        if (savedUserRecordId) {
-            this.userRecordId = savedUserRecordId || null;
-        }
-
-        if (savedCurrentUserId) {
-            this.currentUserId = savedCurrentUserId;
-        }
-
-        if (savedCurrentUserName) {
-            this.currentUserName = savedCurrentUserName;
-            this.updateCurrentUserDisplay();
-        }
-
-        this.loadCurrentUserState();
-    }
-
-    saveData() {
-        localStorage.setItem('userRecordId', this.userRecordId || '');
-        localStorage.setItem('currentUserId', this.currentUserId || '');
-        localStorage.setItem('currentUserName', this.currentUserName || 'Guest');
-        this.saveCurrentUserState();
-    }
-
-    getUserStateKey(userId) {
-        return `userState:${userId || 'guest'}`;
-    }
-
-    saveCurrentUserState() {
-        // Only save state for real (non-guest) users
-        if (!this.currentUserId) return;
-        const key = this.getUserStateKey(this.currentUserId);
-        const state = {
-            dailyNutrition: this.dailyNutrition,
-            userInfo: this.userInfo,
-            conversationHistory: this.conversationHistory,
-            messagesHtml: this.messagesContainer ? this.messagesContainer.innerHTML : ''
-        };
-        localStorage.setItem(key, JSON.stringify(state));
-    }
-
-    loadCurrentUserState() {
-        const key = this.getUserStateKey(this.currentUserId);
-        const raw = localStorage.getItem(key);
-
-        // Defaults for new users without saved state
-        this.dailyNutrition = { carbs: 0, protein: 0, fat: 0, calories: 0 };
-        this.userInfo = {};
-        this.conversationHistory = [];
-        this._undoActions = [];
-
-        if (raw) {
-            try {
-                const state = JSON.parse(raw);
-                this.dailyNutrition = state.dailyNutrition || { carbs: 0, protein: 0, fat: 0, calories: 0 };
-                // Ensure legacy saved states without calories still work
-                if (this.dailyNutrition.calories == null) this.dailyNutrition.calories = 0;
-                this.userInfo = state.userInfo || {};
-                this.conversationHistory = state.conversationHistory || [];
-                this._ensureConversationEntryIds();
-                if (this.messagesContainer && state.messagesHtml) {
-                    this.messagesContainer.innerHTML = state.messagesHtml;
-                    this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-                }
-            } catch (err) {
-                console.error('[MultiUser] Failed to parse user state:', err);
-            }
-        } else if (this.messagesContainer) {
-            // New user with no saved state: show default intro, not previous user's messages.
-            this.messagesContainer.innerHTML = this.defaultMessagesHtml || '';
-            this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-        }
-
-        this.updateDisplay();
-        this.populateUserForm();
-        this.updateAnalyzeButtonStatus();
-    }
-
-    _nextEntryId() {
-        this._entryCounter += 1;
-        return `entry-${Date.now()}-${this._entryCounter}`;
-    }
-
-    _ensureConversationEntryIds() {
-        this.conversationHistory = (this.conversationHistory || []).map((entry) => {
-            if (!entry || typeof entry !== 'object') return entry;
-            if (!entry.id) entry.id = this._nextEntryId();
-            if (!entry.originalNutrition && entry.nutrition) {
-                entry.originalNutrition = this._roundNutrition({ ...entry.nutrition });
-            }
-            return entry;
-        });
-    }
-
-    _normalizeNutrition(nutrition = {}) {
-        return {
-            carbs: Number(nutrition.carbs || 0),
-            protein: Number(nutrition.protein || 0),
-            fat: Number(nutrition.fat || 0),
-            calories: Number(nutrition.calories || 0),
-            food_name: nutrition.food_name,
-            quantity: nutrition.quantity,
-            unit: nutrition.unit,
-            source: nutrition.source
-        };
-    }
-
-    _roundNutrition(nutrition = {}) {
-        return {
-            ...nutrition,
-            carbs: Math.round((Number(nutrition.carbs || 0)) * 100) / 100,
-            protein: Math.round((Number(nutrition.protein || 0)) * 100) / 100,
-            fat: Math.round((Number(nutrition.fat || 0)) * 100) / 100,
-            calories: Math.round((Number(nutrition.calories || 0)) * 10) / 10
-        };
-    }
-
-    _applyNutritionDelta(deltaNutrition = {}, clampToZero = false) {
-        this.dailyNutrition.carbs += Number(deltaNutrition.carbs || 0);
-        this.dailyNutrition.protein += Number(deltaNutrition.protein || 0);
-        this.dailyNutrition.fat += Number(deltaNutrition.fat || 0);
-        this.dailyNutrition.calories += Number(deltaNutrition.calories || 0);
-
-        if (clampToZero) {
-            this.dailyNutrition.carbs = Math.max(0, this.dailyNutrition.carbs);
-            this.dailyNutrition.protein = Math.max(0, this.dailyNutrition.protein);
-            this.dailyNutrition.fat = Math.max(0, this.dailyNutrition.fat);
-            this.dailyNutrition.calories = Math.max(0, this.dailyNutrition.calories);
-        }
-
-        this.dailyNutrition = this._roundNutrition(this.dailyNutrition);
-        this.updateDisplay();
-        this.saveData();
-        this.updateAnalyzeButtonStatus();
-    }
-
-    _isEntryUsingOriginal(entry) {
-        if (!entry || !entry.nutrition) return true;
-        const current = this._normalizeNutrition(entry.nutrition || {});
-        const original = this._normalizeNutrition(entry.originalNutrition || entry.nutrition || {});
-        return (
-            current.carbs === original.carbs &&
-            current.protein === original.protein &&
-            current.fat === original.fat &&
-            current.calories === original.calories
-        );
-    }
-
-    _buildEntryActionsHtml(entry) {
-        if (!entry || !entry.id) return '';
-        return `
-<div class="food-entry-actions" data-entry-id="${entry.id}">
-    ${this._buildEntryActionsInnerHtml(entry.id, entry)}
-</div>`;
-    }
-
-    _buildEntryActionsInnerHtml(entryId, entry = null) {
-        const resolvedEntry = entry || this._getEntryById(entryId).entry;
-        const isOriginal = this._isEntryUsingOriginal(resolvedEntry);
-        const originalDisabledClass = isOriginal ? ' is-disabled' : '';
-        const originalDisabledAttr = isOriginal ? ' disabled' : '';
-        return `
-    <button type="button" class="entry-action-btn entry-edit-btn" onclick="window._chatbot.editFoodEntry('${entryId}')">Edit</button>
-    <button type="button" class="entry-action-btn entry-original-btn${originalDisabledClass}" onclick="window._chatbot.restoreOriginalFoodEntry('${entryId}')"${originalDisabledAttr}>Original</button>
-    <button type="button" class="entry-action-btn entry-trash-btn" onclick="window._chatbot.deleteFoodEntry('${entryId}')">Trash</button>`;
-    }
-
-    _renderFoodEntryInlineEditMessage(entry) {
-        if (!entry) return '';
-        const nutrition = this._normalizeNutrition(entry.nutrition || {});
-        const title = this._escapeHtml(entry.label || entry.input || entry.nutrition?.food_name || 'Food entry');
-        return `
-✏️ <strong>Edit Nutrition</strong>
-
-<div class="food-item-display food-item-editing" data-entry-id="${entry.id}">
-    <div class="food-name">${title}</div>
-    <div class="nutrition-row">
-        <span>Calories:</span>
-        <span><input type="number" class="food-item-edit-input" data-field="calories" step="0.1" value="${nutrition.calories}"> kcal</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Carbs:</span>
-        <span><input type="number" class="food-item-edit-input" data-field="carbs" step="0.1" value="${nutrition.carbs}"> g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Protein:</span>
-        <span><input type="number" class="food-item-edit-input" data-field="protein" step="0.1" value="${nutrition.protein}"> g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Fat:</span>
-        <span><input type="number" class="food-item-edit-input" data-field="fat" step="0.1" value="${nutrition.fat}"> g</span>
-    </div>
-</div>
-
-<div class="food-entry-actions" data-entry-id="${entry.id}">
-    <button type="button" class="entry-action-btn entry-save-btn" onclick="window._chatbot.saveFoodEntryEdit('${entry.id}')">Save</button>
-    <button type="button" class="entry-action-btn entry-cancel-btn" onclick="window._chatbot.cancelFoodEntryEdit('${entry.id}')">Cancel</button>
-</div>`;
-    }
-
-    _renderFoodEntryMessage(entry) {
-        if (!entry) return '';
-        const nutrition = this._normalizeNutrition(entry.nutrition || {});
-        let content = '';
-
-        if (entry.type === 'direct') {
-            const macroName = entry.macroName || 'Nutrition';
-            const amount = Number(entry.quantity || 0);
-            const actionText = amount >= 0 ? 'added' : 'removed';
-            const amountUnit = macroName === 'Calories' ? 'kcal' : 'g';
-            content = `✅ <strong>${macroName}</strong>
-
-<div class="food-item-display">
-    <div class="food-name">${Math.abs(amount)}${amountUnit} ${actionText} directly</div>
-    <div class="nutrition-row">
-        <span>Carbs:</span>
-        <span>${nutrition.carbs}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Protein:</span>
-        <span>${nutrition.protein}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Fat:</span>
-        <span>${nutrition.fat}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Calories:</span>
-        <span>${nutrition.calories} kcal</span>
-    </div>
-</div>
-
-Your daily totals have been updated. Keep tracking!`;
-        } else if (entry.type === 'manual-edit') {
-            content = `✅ <strong>Food Entry Updated</strong>
-
-<div class="food-item-display">
-    <div class="food-name">${this._escapeHtml(entry.label || entry.input || 'Edited entry')}</div>
-    <div class="nutrition-row">
-        <span>Calories:</span>
-        <span>${nutrition.calories} kcal</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Carbs:</span>
-        <span>${nutrition.carbs}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Protein:</span>
-        <span>${nutrition.protein}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Fat:</span>
-        <span>${nutrition.fat}g</span>
-    </div>
-    <div class="food-source">Source: manual edit</div>
-</div>
-
-Your daily totals have been updated. Keep tracking!`;
-        } else {
-            content = this.generateFoodResponse(nutrition, entry.individualFoods || []);
-        }
-
-        return `${content}${this._buildEntryActionsHtml(entry)}`;
-    }
-
-    _getEntryById(entryId) {
-        const index = this.conversationHistory.findIndex((entry) => entry && entry.id === entryId);
-        if (index < 0) return { index: -1, entry: null };
-        return { index, entry: this.conversationHistory[index] };
-    }
-
-    _updateEntryMessageContent(entry) {
-        if (!entry || !entry.id) return;
-        const actionWrap = this.messagesContainer.querySelector(`.food-entry-actions[data-entry-id="${entry.id}"]`);
-        if (!actionWrap) return;
-        const message = actionWrap.closest('.message');
-        const content = message ? message.querySelector('.message-content') : null;
-        if (!content) return;
-        content.innerHTML = this._renderFoodEntryMessage(entry);
-        if (this.currentUserId) this.saveCurrentUserState();
-    }
-
-    _findMessageByEntryId(entryId) {
-        const actionWrap = this.messagesContainer.querySelector(`.food-entry-actions[data-entry-id="${entryId}"]`);
-        return actionWrap ? actionWrap.closest('.message') : null;
-    }
-
-    deleteFoodEntry(entryId) {
-        const { index, entry } = this._getEntryById(entryId);
-        if (!entry || index < 0) {
-            this.addMessage('⚠️ Could not find that food entry.', 'bot');
-            return;
-        }
-
-        const nutrition = this._normalizeNutrition(entry.nutrition || {});
-        this._applyNutritionDelta({
-            carbs: -nutrition.carbs,
-            protein: -nutrition.protein,
-            fat: -nutrition.fat,
-            calories: -nutrition.calories
-        }, true);
-
-        this.conversationHistory.splice(index, 1);
-
-        this._undoActions.push({
-            type: 'trash',
-            entry: JSON.parse(JSON.stringify(entry)),
-            index,
-            timestamp: Date.now()
-        });
-
-        const message = this._findMessageByEntryId(entryId);
-        if (message) {
-            const content = message.querySelector('.message-content');
-            if (content) {
-                content.innerHTML = '🗑️ <strong>Food entry trashed.</strong> Press Undo to restore this entry and intake totals.';
-                content.setAttribute('data-trashed-entry-id', entryId);
-                message.classList.add('trashed-entry-message');
-            } else {
-                message.remove();
-            }
-        }
-
-        this.saveData();
-        if (!message) {
-            this.addMessage('🗑️ Food entry removed. Press Undo to restore it with intake totals.', 'bot');
-        }
-    }
-
-    editFoodEntry(entryId) {
-        const { entry } = this._getEntryById(entryId);
-        if (!entry) {
-            this.addMessage('⚠️ Could not find that food entry.', 'bot');
-            return;
-        }
-
-        const message = this._findMessageByEntryId(entryId);
-        const content = message ? message.querySelector('.message-content') : null;
-        if (!content) {
-            this.addMessage('⚠️ Could not open inline editor for this entry.', 'bot');
-            return;
-        }
-
-        content.innerHTML = this._renderFoodEntryInlineEditMessage(entry);
-
-        const firstInput = content.querySelector('.food-item-edit-input');
-        if (firstInput) firstInput.focus();
-    }
-
-    cancelFoodEntryEdit(entryId) {
-        const { entry } = this._getEntryById(entryId);
-        if (!entry) return;
-        this._updateEntryMessageContent(entry);
-    }
-
-    saveFoodEntryEdit(entryId) {
-        const { entry } = this._getEntryById(entryId);
-        if (!entry) {
-            this.addMessage('⚠️ Could not find that food entry.', 'bot');
-            return;
-        }
-
-        const message = this._findMessageByEntryId(entryId);
-        const content = message ? message.querySelector('.message-content') : null;
-        if (!content) {
-            this.addMessage('⚠️ Could not find inline editor for this entry.', 'bot');
-            return;
-        }
-
-        const current = this._normalizeNutrition(entry.nutrition || {});
-        const previousNutrition = this._roundNutrition({ ...current });
-        const previousType = entry.type;
-        const previousUpdatedAt = entry.updated_at;
-
-        const readValue = (field) => {
-            const el = content.querySelector(`.food-item-edit-input[data-field="${field}"]`);
-            if (!el) return NaN;
-            return Number(el.value);
-        };
-
-        const nextCarbs = readValue('carbs');
-        const nextProtein = readValue('protein');
-        const nextFat = readValue('fat');
-        const nextCalories = readValue('calories');
-
-        if ([nextCarbs, nextProtein, nextFat, nextCalories].some((v) => Number.isNaN(v))) {
-            this.addMessage('⚠️ Invalid number entered. Please correct the values.', 'bot');
-            return;
-        }
-
-        const updatedNutrition = this._roundNutrition({
-            ...current,
-            carbs: nextCarbs,
-            protein: nextProtein,
-            fat: nextFat,
-            calories: nextCalories
-        });
-
-        const delta = {
-            carbs: updatedNutrition.carbs - current.carbs,
-            protein: updatedNutrition.protein - current.protein,
-            fat: updatedNutrition.fat - current.fat,
-            calories: updatedNutrition.calories - current.calories
-        };
-
-        entry.nutrition = updatedNutrition;
-        entry.type = 'manual-edit';
-        entry.updated_at = new Date().toISOString();
-
-        this._undoActions.push({
-            type: 'edit',
-            entryId,
-            previousNutrition,
-            previousType,
-            previousUpdatedAt,
-            timestamp: Date.now()
-        });
-
-        this._applyNutritionDelta(delta, true);
-        this._updateEntryMessageContent(entry);
-        this.saveData();
-        const editedName = this._escapeHtml(entry.label || entry.input || entry.nutrition?.food_name || 'Food entry');
-        this.addMessage(`✏️ Updated <strong>${editedName}</strong> and recalculated intake totals.`, 'bot');
-    }
-
-    restoreOriginalFoodEntry(entryId) {
-        const { entry } = this._getEntryById(entryId);
-        if (!entry) {
-            this.addMessage('⚠️ Could not find that food entry.', 'bot');
-            return;
-        }
-
-        const originalNutrition = this._normalizeNutrition(entry.originalNutrition || entry.nutrition || {});
-        const current = this._normalizeNutrition(entry.nutrition || {});
-
-        const isSame =
-            originalNutrition.carbs === current.carbs &&
-            originalNutrition.protein === current.protein &&
-            originalNutrition.fat === current.fat &&
-            originalNutrition.calories === current.calories;
-
-        if (isSame) {
-            this.addMessage('ℹ️ This entry is already using the original nutrition values.', 'bot');
-            return;
-        }
-
-        const previousNutrition = this._roundNutrition({ ...current });
-        const previousType = entry.type;
-        const previousUpdatedAt = entry.updated_at;
-
-        const restoredNutrition = this._roundNutrition({
-            ...current,
-            ...originalNutrition
-        });
-
-        const delta = {
-            carbs: restoredNutrition.carbs - current.carbs,
-            protein: restoredNutrition.protein - current.protein,
-            fat: restoredNutrition.fat - current.fat,
-            calories: restoredNutrition.calories - current.calories
-        };
-
-        entry.nutrition = restoredNutrition;
-        entry.type = 'manual-edit';
-        entry.updated_at = new Date().toISOString();
-
-        this._undoActions.push({
-            type: 'edit',
-            entryId,
-            previousNutrition,
-            previousType,
-            previousUpdatedAt,
-            timestamp: Date.now()
-        });
-
-        this._applyNutritionDelta(delta, true);
-        this._updateEntryMessageContent(entry);
-        this.saveData();
-        this.addMessage('♻️ Restored original nutrition data for this food entry.', 'bot');
-    }
-
-
-
-    updateUserInfo() {
-        const formData = new FormData(this.userInfoForm);
-        this.userInfo = {
-            gender: formData.get('gender'),
-            age: formData.get('age'),
-            height: formData.get('height'),
-            weight: formData.get('weight'),
-            activity: formData.get('activity'),
-            diet: formData.get('diet'),
-            preference: formData.get('preference')
-        };
-        this.saveData();
-        this.updateAnalyzeButtonStatus();
-        if (this._profileIsFilled()) this._updateProgressBars();
-    }
-
-    async handleSaveUserInfo() {
-        // Collect latest form values then persist
-        this.updateUserInfo();
-
-        const btn = this.saveUserInfoBtn;
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = 'Saving...';
-        }
-
-        try {
-            if (this.currentUserId) {
-                await this.saveUserInfoToBackend();
-            }
-            if (btn) {
-                btn.textContent = '✓ Saved';
-                btn.style.background = 'var(--success, #22c55e)';
-                setTimeout(() => {
-                    btn.textContent = 'Save';
-                    btn.style.background = '';
-                    btn.disabled = false;
-                }, 1800);
-            }
-        } catch (err) {
-            console.error('[UserInfo] Save failed:', err);
-            if (btn) {
-                btn.textContent = 'Save failed';
-                setTimeout(() => {
-                    btn.textContent = 'Save';
-                    btn.disabled = false;
-                }, 2000);
-            }
-        }
-    }
-
-    async saveUserInfoToBackend() {
-        if (!this.currentUserId) return;
         
-        try {
-            await fetch('/api/user-records', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    user_id: this.currentUserId,
-                    user_info: { ...this.userInfo, name: this.currentUserName }
-                })
-            });
-            console.log('[UserInfo] Auto-saved user info to backend');
-        } catch (err) {
-            console.error('[UserInfo] Failed to save user info:', err);
-        }
-    }
-
-    populateUserForm() {
-        this.clearUserForm();
-        if (this.userInfo.gender) {
-            document.querySelector(`input[name="gender"][value="${this.userInfo.gender}"]`).checked = true;
-        }
-        if (this.userInfo.age) document.querySelector('input[name="age"]').value = this.userInfo.age;
-        if (this.userInfo.height) document.querySelector('input[name="height"]').value = this.userInfo.height;
-        if (this.userInfo.weight) document.querySelector('input[name="weight"]').value = this.userInfo.weight;
-        if (this.userInfo.activity) document.querySelector('select[name="activity"]').value = this.userInfo.activity;
-        if (this.userInfo.diet) document.querySelector('select[name="diet"]').value = this.userInfo.diet;
-        if (this.userInfo.preference) {
-            document.querySelector(`input[name="preference"][value="${this.userInfo.preference}"]`).checked = true;
-        }
-    }
-
-    clearUserForm() {
-        this.userInfoForm.reset();
-    }
-
-    updateCurrentUserDisplay() {
-        if (this.currentUserDisplay) {
-            this.currentUserDisplay.textContent = this.currentUserName || 'Guest';
-        }
-    }
-
-    openUserModal() {
-        this.userModal.style.display = 'flex';
-        this.renderUserList();
-    }
-
-    closeUserModal() {
-        this.userModal.style.display = 'none';
-    }
-
-    renderUserList() {
-        this.userList.innerHTML = '';
-
-        if (this.allUsers.length === 0) {
-            this.userList.innerHTML = '<div class="no-users-message">No users yet — add one below.</div>';
+        if (latestUserId) {
+          const latestUser = this.state.users.find((u) => u.user_id === latestUserId);
+          if (latestUser) {
+            this.setActiveUser(latestUser);
+            await this.loadDailyHistoryForMonth();
+            this.renderAll();
             return;
+          }
         }
-
-        this.allUsers.forEach(user => {
-            const name = user.user_info?.name || user.id;
-            const isActive = user.id === this.currentUserId;
-
-            const userItem = document.createElement('div');
-            userItem.className = 'user-card' + (isActive ? ' user-card-active' : '');
-
-            // Avatar circle with initials
-            const avatar = document.createElement('div');
-            avatar.className = 'user-avatar';
-            avatar.textContent = name.charAt(0).toUpperCase();
-
-            // Name + status
-            const info = document.createElement('div');
-            info.className = 'user-card-info';
-
-            const nameSpan = document.createElement('span');
-            nameSpan.className = 'user-card-name';
-            nameSpan.textContent = name;
-            nameSpan.dataset.userId = user.id;
-
-            info.appendChild(nameSpan);
-            if (isActive) {
-                const badge = document.createElement('span');
-                badge.className = 'user-active-badge';
-                badge.textContent = 'Active';
-                info.appendChild(badge);
-            }
-
-            // Action buttons
-            const actions = document.createElement('div');
-            actions.className = 'user-card-actions';
-
-            if (!isActive) {
-                const switchBtn = document.createElement('button');
-                switchBtn.className = 'uca-btn uca-switch';
-                switchBtn.title = 'Switch to this user';
-                switchBtn.innerHTML = '&#x21C4;';
-                switchBtn.addEventListener('click', () => this.switchToUser(user));
-                actions.appendChild(switchBtn);
-            }
-
-            const editBtn = document.createElement('button');
-            editBtn.className = 'uca-btn uca-edit';
-            editBtn.title = 'Rename';
-            editBtn.innerHTML = '&#x270E;';
-            editBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.startInlineUserNameEdit(user.id, nameSpan, userItem);
-            });
-
-            const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'uca-btn uca-delete';
-            deleteBtn.title = 'Delete user';
-            deleteBtn.innerHTML = '&#x1F5D1;';
-            deleteBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.deleteUser(user.id);
-            });
-
-            actions.appendChild(editBtn);
-            actions.appendChild(deleteBtn);
-
-            userItem.appendChild(avatar);
-            userItem.appendChild(info);
-            userItem.appendChild(actions);
-            this.userList.appendChild(userItem);
-        });
+      }
+      
+      if (!this.state.activeUser) {
+        this.openPage('users');
+      }
+      this.renderAll();
+      if (this.state.activeUserId) {
+        await this.loadDailyHistoryForMonth();
+      }
     }
 
-    startInlineUserNameEdit(userId, userNameSpan, userItem) {
-        const user = this.allUsers.find(u => u.id === userId);
-        if (!user || !userNameSpan || !userItem) return;
+    // Custom confirmation modal (replaces window.confirm)
+    showConfirmation(title, message) {
+      return new Promise((resolve) => {
+        this.confirmationTitle.textContent = title;
+        this.confirmationMessage.textContent = message;
+        this.confirmationModal.removeAttribute('hidden');
+        this.confirmationConfirmBtn.focus();
 
-        // Prevent duplicate inline editors in same row
-        if (userItem.querySelector('.inline-rename-wrapper')) return;
-
-        const currentName = user.user_info?.name || userId;
-
-        // infoDiv is the direct child of userItem that contains nameSpan
-        const infoDiv = userNameSpan.closest('.user-card-info') || userNameSpan.parentNode;
-        const actionsDiv = userItem.querySelector('.user-card-actions');
-
-        // Hide actions column; wrapper will span both name + actions columns via CSS grid-column
-        if (actionsDiv) actionsDiv.style.display = 'none';
-
-        const wrapper = document.createElement('div');
-        wrapper.className = 'inline-rename-wrapper';
-
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'inline-rename-input';
-        input.value = currentName;
-
-        const saveBtn = document.createElement('button');
-        saveBtn.type = 'button';
-        saveBtn.className = 'inline-rename-save';
-        saveBtn.textContent = 'Save';
-
-        const cancelBtn = document.createElement('button');
-        cancelBtn.type = 'button';
-        cancelBtn.className = 'inline-rename-cancel';
-        cancelBtn.textContent = 'Cancel';
-
-        wrapper.appendChild(input);
-        wrapper.appendChild(saveBtn);
-        wrapper.appendChild(cancelBtn);
-
-        // Replace the info div (direct child of userItem) with the wrapper
-        userItem.replaceChild(wrapper, infoDiv);
-        input.focus();
-        input.select();
-
-        const cancelEdit = () => {
-            if (wrapper.parentNode === userItem) {
-                userItem.replaceChild(infoDiv, wrapper);
-            }
-            if (actionsDiv) actionsDiv.style.display = '';
-        };
-
-        saveBtn.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            await this.editUserName(userId, input.value.trim());
-        });
-
-        cancelBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            cancelEdit();
-        });
-
-        input.addEventListener('keydown', async (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                await this.editUserName(userId, input.value.trim());
-            }
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                cancelEdit();
-            }
-        });
+        this._pendingConfirmCallback = resolve;
+      });
     }
 
-    async editUserName(userId, newName) {
-        const user = this.allUsers.find(u => u.id === userId);
-        if (!user) return;
-
-        const trimmedName = (newName || '').trim();
-        if (!trimmedName) return;
-
-        try {
-            const updatedUserInfo = { ...(user.user_info || {}), name: trimmedName };
-            const response = await fetch('/api/user-records', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    user_id: userId,
-                    user_info: updatedUserInfo
-                })
-            });
-
-            if (!response.ok) {
-                alert('Failed to update user name. Please try again.');
-                return;
-            }
-
-            user.user_info = updatedUserInfo;
-
-            if (this.currentUserId === userId) {
-                this.currentUserName = trimmedName;
-                this.updateCurrentUserDisplay();
-                this.saveData();
-            }
-
-            this.renderUserList();
-            this.addMessage(`✏️ User renamed to "${trimmedName}".`, 'bot');
-        } catch (err) {
-            console.error('[MultiUser] Failed to edit user name:', err);
-            alert('Error updating user name.');
-        }
+    closeConfirmation() {
+      this.confirmationModal.setAttribute('hidden', '');
+      if (this._pendingConfirmCallback) {
+        this._pendingConfirmCallback(false);
+        this._pendingConfirmCallback = null;
+      }
     }
 
-    async switchToUser(user) {
-        console.log('[MultiUser] Switching to user:', user);
-
-        // Save current user's daily intake if we have a current user
-        if (this.currentUserId && this.userRecordId) {
-            try {
-                await this.saveDailyIntakeToBackend();
-            } catch (err) {
-                console.error('[MultiUser] Failed to save current user intake:', err);
-            }
-        }
-
-        // Persist current user's local state before switching
-        this.saveCurrentUserState();
-
-        // Switch to new user
-        this.currentUserId = user.id;
-        this.currentUserName = user.user_info?.name || user.id;
-        this.userRecordId = user.id;
-
-        // Load selected user's local state (chat, intake, profile)
-        this.loadCurrentUserState();
-
-        // If no local profile exists yet, initialize from backend profile
-        const hasLocalProfile = this.userInfo && Object.keys(this.userInfo).length > 0;
-        if (!hasLocalProfile && user.user_info) {
-            this.userInfo = { ...user.user_info };
-            this.populateUserForm();
-            this.saveCurrentUserState();
-        }
-
-        // Save to localStorage
-        this.saveData();
-        this.updateCurrentUserDisplay();
-        this.renderUserList();
-        this.closeUserModal();
-
-        this.addMessage(`👤 Switched to ${this.currentUserName}'s account.`, 'bot');
+    confirmConfirmation() {
+      this.confirmationModal.setAttribute('hidden', '');
+      if (this._pendingConfirmCallback) {
+        this._pendingConfirmCallback(true);
+        this._pendingConfirmCallback = null;
+      }
     }
 
-    async handleCreateUser() {
-        const userName = this.newUserNameInput.value.trim();
-        if (!userName) {
-            alert('Please enter a name for the new user.');
-            return;
-        }
+    // Toast notification system (replaces alert)
+    showToast(message, type = 'info', duration = 3000) {
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.textContent = message;
+      this.toastContainer.appendChild(toast);
 
-        try {
-            const response = await fetch('/api/user-records', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: userName })
-            });
-
-            if (!response.ok) {
-                alert('Failed to create user. Please try again.');
-                return;
-            }
-
-            const data = await response.json();
-            console.log('[MultiUser] Created new user:', data);
-
-            // Add to local users list
-            this.allUsers.push(data.user);
-
-            // Reload the user list
-            this.renderUserList();
-
-            // Clear input
-            this.newUserNameInput.value = '';
-
-            this.addMessage(`✅ Created new user "${userName}".`, 'bot');
-        } catch (err) {
-            console.error('[MultiUser] Failed to create user:', err);
-            alert('Error creating user:', err.message);
-        }
+      if (duration > 0) {
+        setTimeout(() => {
+          toast.classList.add('closing');
+          toast.addEventListener('animationend', () => toast.remove(), { once: true });
+        }, duration);
+      }
+      return toast;
     }
 
-    async deleteUser(userId) {
-        const user = this.allUsers.find(u => u.id === userId);
-        if (!user) return;
-
-        const ok = confirm(`Delete user "${user.user_info?.name || userId}"?`);
-        if (!ok) return;
-
-        try {
-            const response = await fetch(`/api/user-records/${userId}`, {
-                method: 'DELETE'
-            });
-
-            if (!response.ok) {
-                alert('Failed to delete user.');
-                return;
-            }
-
-            // Remove from local list
-            this.allUsers = this.allUsers.filter(u => u.id !== userId);
-
-            // If deleted user was current, reset to first user or guest
-            if (this.currentUserId === userId) {
-                if (this.allUsers.length > 0) {
-                    await this.switchToUser(this.allUsers[0]);
-                } else {
-                    this.currentUserId = null;
-                    this.currentUserName = 'Guest';
-                    this.userRecordId = null;
-                    this.dailyNutrition = { carbs: 0, protein: 0, fat: 0, calories: 0 };
-                    this.updateDisplay();
-                    this.saveData();
-                    this.updateCurrentUserDisplay();
-                }
-            }
-
-            this.renderUserList();
-            this.addMessage(`🗑️ Deleted user.`, 'bot');
-        } catch (err) {
-            console.error('[MultiUser] Failed to delete user:', err);
-            alert('Error deleting user:', err.message);
-        }
+    entriesForSelectedDate() {
+      return this.state.entriesByDate[this.state.selectedDate] || [];
     }
 
-    async saveDailyIntakeToBackend() {
-        if (!this.currentUserId) return;
-
-        try {
-            // Attach recommended values if the user has run a recommendation this session
-            let recommended = {};
-            const lastRec = sessionStorage.getItem('lastRecommendation');
-            if (lastRec) {
-                try {
-                    const rec = JSON.parse(lastRec);
-                    recommended = {
-                        calories: rec.calories,
-                        carbs: rec.carbohydrate_intake,
-                        protein: rec.protein_intake,
-                        fat: rec.fat_intake
-                    };
-                } catch (_) {}
-            }
-
-            const response = await fetch(`/api/daily-intake/${this.currentUserId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    daily_nutrition: this.dailyNutrition,
-                    recommended,
-                    timestamp: new Date().toISOString()
-                })
-            });
-
-            if (response.ok) {
-                console.log('[MultiUser] Saved daily intake for user:', this.currentUserId);
-            }
-        } catch (err) {
-            console.error('[MultiUser] Failed to save daily intake:', err);
-        }
+    calculateTotals(entries = this.entriesForSelectedDate()) {
+      return entries.reduce((acc, item) => {
+        acc.calories += Number(item.nutrition.calories || 0);
+        acc.carbs += Number(item.nutrition.carbs || 0);
+        acc.protein += Number(item.nutrition.protein || 0);
+        acc.fat += Number(item.nutrition.fat || 0);
+        return acc;
+      }, { calories: 0, carbs: 0, protein: 0, fat: 0 });
     }
 
-    async handleFoodInput(e) {
-        e.preventDefault();
-
-        const foodInput = this.foodInput.value.trim();
-        if (!foodInput) return;
-
-        // Add user message to chat
-        this.addMessage(foodInput, 'user');
-        this.foodInput.value = '';
-
-        // Check for direct nutrition input (e.g., "50g carbs", "-20g fat", "1000kcal", "-100 kcal")
-        const directMacroMatch = foodInput.match(/^([+-]?\d+(?:\.\d+)?)\s*g?\s*(carb|carbon|carbohydrate|protein|fat)s?$/i);
-        const directCalorieMatch = foodInput.match(/^([+-]?\d+(?:\.\d+)?)\s*(kcal|cal|calorie|calories)$/i);
-        if (directMacroMatch || directCalorieMatch) {
-            const amount = parseFloat((directMacroMatch || directCalorieMatch)[1]);
-            const macroType = directMacroMatch ? directMacroMatch[2].toLowerCase() : 'calories';
-            
-            let macroName = '';
-            let nutrition = { carbs: 0, protein: 0, fat: 0, calories: 0 };
-            
-            if (macroType === 'carb' || macroType === 'carbon' || macroType === 'carbohydrate') {
-                nutrition.carbs = amount;
-                macroName = 'Carbohydrates';
-            } else if (macroType === 'protein') {
-                nutrition.protein = amount;
-                macroName = 'Protein';
-            } else if (macroType === 'fat') {
-                nutrition.fat = amount;
-                macroName = 'Fat';
-            } else {
-                nutrition.calories = amount;
-                macroName = 'Calories';
-            }
-
-            const entry = {
-                id: this._nextEntryId(),
-                input: foodInput,
-                label: `${Math.abs(amount)}${macroName === 'Calories' ? 'kcal' : 'g'} ${macroName}`,
-                nutrition: this._roundNutrition({
-                    ...nutrition,
-                    food_name: macroName,
-                    quantity: amount,
-                    unit: macroName === 'Calories' ? 'kcal' : 'g'
-                }),
-                originalNutrition: this._roundNutrition({
-                    ...nutrition,
-                    food_name: macroName,
-                    quantity: amount,
-                    unit: macroName === 'Calories' ? 'kcal' : 'g'
-                }),
-                macroName,
-                quantity: amount,
-                type: 'direct',
-                timestamp: new Date().toISOString()
-            };
-
-            this.conversationHistory.push(entry);
-            this._undoActions.push({ type: 'add', entryId: entry.id, timestamp: Date.now() });
-            this.addFoodToDaily(entry.nutrition);
-            this.addMessage(this._renderFoodEntryMessage(entry), 'bot');
-            
-            this.updateAnalyzeButtonStatus();
-            this.saveData();
-            return;
-        }
-
-        // Show loading state — update text if fallback sources are used
-        const loadingMsg = this.addMessage('🔍 Searching CSV database...', 'bot', true);
-
-        // If the request takes longer, CSV missed and we're hitting USDA or Doubao
-        const usdaTimer = setTimeout(() => {
-            this.updateMessage(loadingMsg, '🔍 Not in CSV, checking USDA API...');
-        }, 900);
-        const doubaoTimer = setTimeout(() => {
-            this.updateMessage(loadingMsg, '🤖 Not in USDA, querying Doubao AI...');
-        }, 3500);
-
-        try {
-            // Call the API
-            const response = await fetch('/api/search-food', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ food_input: foodInput })
-            });
-
-            const result = await response.json();
-            clearTimeout(usdaTimer);
-            clearTimeout(doubaoTimer);
-
-            if (!response.ok) {
-                // More helpful error messages
-                let errorMsg = result.error || 'Unable to find food information';
-                if (errorMsg.includes('No foods found')) {
-                    errorMsg += '\n\nTry being more specific (e.g., "chicken breast" instead of just "chicken")';
-                }
-                this.updateMessage(loadingMsg, `❌ ${errorMsg}`);
-                return;
-            }
-
-            // Extract nutrition data
-            const nutrition = result.nutrition;
-            const individualFoods = result.individual_foods || [];
-            
-            // Check if nutrition data is actually valid (not all zeros across macros and calories)
-            if ((nutrition.carbs || 0) === 0 && (nutrition.protein || 0) === 0 && (nutrition.fat || 0) === 0 && (nutrition.calories || 0) === 0) {
-                this.updateMessage(loadingMsg, `⚠️ Found foods but nutrition data appears incomplete.\n\nThis might be a data limitation. Try a different food or variation.`);
-                return;
-            }
-            
-            const entry = {
-                id: this._nextEntryId(),
-                input: foodInput,
-                label: foodInput,
-                nutrition: this._roundNutrition({ ...nutrition, food_name: nutrition.food_name || foodInput }),
-                originalNutrition: this._roundNutrition({ ...nutrition, food_name: nutrition.food_name || foodInput }),
-                individualFoods,
-                type: 'search',
-                timestamp: new Date().toISOString()
-            };
-
-            this.conversationHistory.push(entry);
-            this._undoActions.push({ type: 'add', entryId: entry.id, timestamp: Date.now() });
-            this.addFoodToDaily(entry.nutrition);
-
-            // Generate friendly response showing all foods if multiple
-            this.updateMessage(loadingMsg, this._renderFoodEntryMessage(entry));
-
-            // Auto-update analyze button status
-            this.updateAnalyzeButtonStatus();
-            
-            this.saveData();
-
-        } catch (error) {
-            clearTimeout(usdaTimer);
-            clearTimeout(doubaoTimer);
-            console.error('Error:', error);
-            this.updateMessage(loadingMsg, '❌ Error processing food. Please try again.');
-        }
+    toNumber(v, fallback = 0) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fallback;
     }
 
-    _sourceLabel(source) {
-        if (!source || source === 'CSV') return 'CSV database';
-        if (source.includes('USDA')) return 'USDA API';
-        if (source.includes('Doubao')) return 'Doubao AI';
-        return source;
+    buildTargetsFromProfile() {
+      const p = this.state.profile || {};
+      const gender = this.toNumber(p.gender, 0);
+      const age = this.toNumber(p.age, 0);
+      const height = this.toNumber(p.height, 0);
+      const weight = this.toNumber(p.weight, 0);
+      const activity = this.toNumber(p.activity, 0);
+      const diet = this.toNumber(p.diet, 0);
+
+      if (age <= 0 || height <= 0 || weight <= 0) return null;
+      if (![0, 1].includes(gender)) return null;
+      if (![0, 1, 2, 3].includes(activity)) return null;
+      if (![0, 1, 2, 3].includes(diet)) return null;
+
+      const rmr = gender === 0
+        ? (9.99 * weight) + (6.25 * height) - (4.92 * age) + 5
+        : (9.99 * weight) + (6.25 * height) - (4.92 * age) - 161;
+
+      const activityFactor = [1.2, 1.375, 1.55, 1.725][activity];
+      const calories = rmr * activityFactor;
+      const [carbScale, proteinScale, fatScale] = DIET_SCALE[diet];
+
+      return {
+        calories,
+        carbohydrate_intake: calories * carbScale,
+        protein_intake: calories * proteinScale,
+        fat_intake: calories * fatScale,
+      };
     }
 
-    generateFoodResponse(nutrition, individualFoods = []) {
-        let foodsDisplay = '';
-
-        // Show individual foods if multiple
-        if (individualFoods.length > 1) {
-            foodsDisplay = '<div class="foods-list">';
-            individualFoods.forEach(food => {
-                const src = this._sourceLabel(food.source);
-                foodsDisplay += `
-                <div class="food-item-display" style="margin-bottom: 12px;">
-                    <div class="food-name">${food.quantity}${food.unit} ${food.food_name}</div>
-                    <div class="nutrition-row">
-                        <span>Calories:</span>
-                        <span>${food.calories ?? 0} kcal</span>
-                    </div>
-                    <div class="nutrition-row">
-                        <span>Carbs:</span>
-                        <span>${food.carbs}g</span>
-                    </div>
-                    <div class="nutrition-row">
-                        <span>Protein:</span>
-                        <span>${food.protein}g</span>
-                    </div>
-                    <div class="nutrition-row">
-                        <span>Fat:</span>
-                        <span>${food.fat}g</span>
-                    </div>
-                    <div class="food-source">Source: ${src}</div>
-                </div>`;
-            });
-            foodsDisplay += '</div>';
-
-            return `
-✅ <strong>Added ${individualFoods.length} foods</strong>
-
-${foodsDisplay}
-
-<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee;">
-    <strong>Total Added:</strong>
-    <div class="nutrition-row">
-        <span>Calories:</span>
-        <span>${nutrition.calories ?? 0} kcal</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Carbs:</span>
-        <span>${nutrition.carbs}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Protein:</span>
-        <span>${nutrition.protein}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Fat:</span>
-        <span>${nutrition.fat}g</span>
-    </div>
-</div>
-
-Your daily totals have been updated. Keep tracking!
-            `;
-        } else if (individualFoods.length === 1) {
-            const food = individualFoods[0];
-            const src = this._sourceLabel(food.source || nutrition.source);
-            return `
-✅ <strong>${food.food_name}</strong>
-
-<div class="food-item-display">
-    <div class="food-name">${food.quantity}${food.unit} added</div>
-    <div class="nutrition-row">
-        <span>Calories:</span>
-        <span>${food.calories ?? 0} kcal</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Carbs:</span>
-        <span>${food.carbs}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Protein:</span>
-        <span>${food.protein}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Fat:</span>
-        <span>${food.fat}g</span>
-    </div>
-    <div class="food-source">Source: ${src}</div>
-</div>
-
-Your daily totals have been updated. Keep tracking!
-            `;
-        } else {
-            // Fallback to old format if no individual foods
-            return `
-✅ <strong>Food Added</strong>
-
-<div class="food-item-display">
-    <div class="nutrition-row">
-        <span>Calories:</span>
-        <span>${nutrition.calories ?? 0} kcal</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Carbs:</span>
-        <span>${nutrition.carbs}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Protein:</span>
-        <span>${nutrition.protein}g</span>
-    </div>
-    <div class="nutrition-row">
-        <span>Fat:</span>
-        <span>${nutrition.fat}g</span>
-    </div>
-</div>
-
-Your daily totals have been updated. Keep tracking!
-            `;
-        }
+    getTargetModel() {
+      if (this.state.recommendation) {
+        return this.state.recommendation;
+      }
+      return this.buildTargetsFromProfile();
     }
 
-    addFoodToDaily(nutrition) {
-        this._applyNutritionDelta(nutrition, false);
+    targetProgressRowHtml(label, current, target, unit, keyClass) {
+      const safeTarget = Number(target || 0);
+      const safeCurrent = Number(current || 0);
+      const ratio = safeTarget > 0 ? safeCurrent / safeTarget : 0;
+      const pct = Math.max(0, ratio * 100);
+      const clamped = Math.min(100, pct);
+      const exceeded = safeTarget > 0 && safeCurrent > safeTarget;
+      const overBy = exceeded ? safeCurrent - safeTarget : 0;
+
+      return `
+        <div class="target-progress-row ${exceeded ? 'is-exceeded' : ''}">
+          <div class="target-progress-head">
+            <span>${label}</span>
+            <strong>${round(safeCurrent, 2)} / ${round(safeTarget, 2)} ${unit}</strong>
+          </div>
+          <div class="target-progress-track" role="progressbar" aria-label="${label} progress" aria-valuemin="0" aria-valuemax="${round(safeTarget, 2)}" aria-valuenow="${round(safeCurrent, 2)}">
+            <div class="target-progress-fill ${keyClass}${exceeded ? ' warning-shine' : ''}" style="width: ${clamped.toFixed(1)}%;"></div>
+          </div>
+          <div class="target-progress-meta">
+            <span>${round(pct, 1)}%</span>
+            ${exceeded ? `<span class="target-over">Over by ${round(overBy, 2)} ${unit}</span>` : ''}
+          </div>
+        </div>
+      `;
     }
 
-    updateDisplay() {
-        if (this.caloriesDisplay) this.caloriesDisplay.textContent = Math.round(this.dailyNutrition.calories || 0);
-        if (this.carbsDisplay) this.carbsDisplay.textContent = this.dailyNutrition.carbs.toFixed(1);
-        if (this.proteinDisplay) this.proteinDisplay.textContent = this.dailyNutrition.protein.toFixed(1);
-        if (this.fatDisplay) this.fatDisplay.textContent = this.dailyNutrition.fat.toFixed(1);
-        this._updateProgressBars();
+    pushHistory(prevState, nextState, actionLabel) {
+      this.state.historyUndo.push({ prevState, nextState, actionLabel });
+      this.state.historyRedo = [];
     }
 
-    _profileIsFilled() {
-        const u = this.userInfo;
-        return u && u.gender != null && u.gender !== '' &&
-            parseFloat(u.age) > 0 && parseFloat(u.height) > 0 && parseFloat(u.weight) > 0 &&
-            u.activity !== '' && u.activity != null &&
-            u.diet !== '' && u.diet != null;
+    applyStatePatch(nextEntriesByDate, actionLabel) {
+      const prev = deepCopy(this.state.entriesByDate);
+      this.state.entriesByDate = nextEntriesByDate;
+      const next = deepCopy(this.state.entriesByDate);
+      this.pushHistory(prev, next, actionLabel);
+      this.renderAll();
+      if (this.state.settings.autosave) this.saveDayToBackend();
     }
 
-    _calcTargets() {
-        // Recompute targets from profile (mirrors backend calculate_rmr / calculate_daily_calories)
-        const u = this.userInfo;
-        const weight = parseFloat(u.weight) || 70;
-        const height = parseFloat(u.height) || 170;
-        const age    = parseFloat(u.age)    || 25;
-        const gender = parseInt(u.gender)   || 0;
-        const activity = parseInt(u.activity) || 2;
-        const diet   = parseInt(u.diet)     || 0;
-
-        let rmr = gender === 0
-            ? 9.99 * weight + 6.25 * height - 4.92 * age + 5
-            : 9.99 * weight + 6.25 * height - 4.92 * age - 161;
-        const actFactors = [1.2, 1.375, 1.55, 1.725];
-        const calories = rmr * (actFactors[activity] || 1.55);
-
-        // diet plan macros (fraction of calories)
-        const dietScales = [
-            [0.50, 0.20, 0.30], // balanced
-            [0.60, 0.20, 0.20], // low fat
-            [0.20, 0.30, 0.50], // low carb
-            [0.28, 0.39, 0.33], // high protein
-        ];
-        const [cf, pf, ff] = dietScales[diet] || dietScales[0];
-        return {
-            calories: Math.round(calories),
-            carbs:   Math.round(calories * cf / 4.1),
-            protein: Math.round(calories * pf / 4.1),
-            fat:     Math.round(calories * ff / 8.8),
-        };
+    renderAll() {
+      this.renderActiveUser();
+      this.renderUsers();
+      this.renderProfile();
+      this.renderCustomRecipeSection();
+      this.renderRecommendationRefreshHint();
+      this.renderSummary();
+      this.renderTimeline();
+      this.renderDashboard();
+      this.renderHistory();
+      this.renderRecommendationPanels();
+      this.renderCalendar();
     }
 
-    _updateProgressBars() {
-        if (!this.intakeProgress) return;
-
-        // Check for targets from last recommendation first, fall back to computed
-        let targets = null;
-        const lastRec = sessionStorage.getItem('lastRecommendation');
-        if (lastRec) {
-            try {
-                const rec = JSON.parse(lastRec);
-                if (rec && rec.calories) {
-                    targets = {
-                        calories: Math.round(rec.calories),
-                        carbs:    Math.round(rec.carbohydrate_intake),
-                        protein:  Math.round(rec.protein_intake),
-                        fat:      Math.round(rec.fat_intake),
-                    };
-                }
-            } catch (_) {}
-        }
-        if (!targets && this._profileIsFilled()) {
-            targets = this._calcTargets();
-        }
-
-        const bars = [
-            { id: 'calories', intake: Math.round(this.dailyNutrition.calories || 0), unit: 'kcal', target: targets?.calories },
-            { id: 'carbs',    intake: parseFloat(this.dailyNutrition.carbs.toFixed(1)),   unit: 'g', target: targets?.carbs },
-            { id: 'protein',  intake: parseFloat(this.dailyNutrition.protein.toFixed(1)), unit: 'g', target: targets?.protein },
-            { id: 'fat',      intake: parseFloat(this.dailyNutrition.fat.toFixed(1)),     unit: 'g', target: targets?.fat },
-        ];
-
-        bars.forEach(({ id, intake, unit, target }) => {
-            const barEl  = document.getElementById(`${id}-bar`);
-            const textEl = document.getElementById(`${id}-progress-text`);
-            if (!barEl || !textEl) return;
-
-            if (target) {
-                // Profile filled: split-bar — base portion + excess portion
-                const rawPct  = Math.round(intake / target * 100);
-                const excessEl = document.getElementById(`${id}-bar-excess`);
-                textEl.textContent = `${intake} / ${target} ${unit}`;
-                barEl.classList.remove('bar-low', 'bar-mid', 'bar-over', 'bar-danger', 'has-excess');
-
-                if (rawPct <= 100) {
-                    barEl.style.width = rawPct + '%';
-                    if (excessEl) { excessEl.style.width = '0%'; excessEl.classList.remove('pulsing'); }
-                    if (rawPct <= 80) barEl.classList.add('bar-low');
-                    else              barEl.classList.add('bar-mid');
-                } else {
-                    // Split: base occupies its proportional share, excess takes the rest
-                    const baseW   = (100 / rawPct * 100).toFixed(2) + '%';
-                    const excessW = ((rawPct - 100) / rawPct * 100).toFixed(2) + '%';
-                    barEl.style.width = baseW;
-                    barEl.classList.add('has-excess');
-                    if (rawPct <= 120) barEl.classList.add('bar-over');
-                    else               barEl.classList.add('bar-danger');
-                    if (excessEl) { excessEl.style.width = excessW; excessEl.classList.add('pulsing'); }
-                }
-            } else {
-                // No profile: just show raw intake, empty bar
-                const excessEl = document.getElementById(`${id}-bar-excess`);
-                barEl.style.width = '0%';
-                textEl.textContent = `${intake} ${unit}`;
-                barEl.classList.remove('bar-low', 'bar-mid', 'bar-over', 'bar-danger', 'has-excess');
-                if (excessEl) { excessEl.style.width = '0%'; excessEl.classList.remove('pulsing'); }
-            }
-        });
+    getRecommendationRequestKey() {
+      const totals = this.calculateTotals();
+      const profile = this.state.profile || {};
+      return JSON.stringify({
+        userId: this.state.activeUserId,
+        profile,
+        totals: {
+          calories: round(totals.calories, 3),
+          carbs: round(totals.carbs, 3),
+          protein: round(totals.protein, 3),
+          fat: round(totals.fat, 3),
+        },
+      });
     }
 
-    addMessage(text, sender = 'bot', isLoading = false) {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${sender}-message`;
-        if (isLoading) messageDiv.classList.add('loading');
-
-        const contentDiv = document.createElement('div');
-        contentDiv.className = 'message-content';
-        
-        if (isLoading) {
-            contentDiv.innerHTML = `<div class="loading-spinner"></div> ${text}`;
-        } else {
-            contentDiv.innerHTML = text;
-        }
-
-        messageDiv.appendChild(contentDiv);
-        this.messagesContainer.appendChild(messageDiv);
-
-        // Scroll to bottom
-        this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-
-        // Persist message history only for identified users
-        if (this.currentUserId) {
-            this.saveCurrentUserState();
-        }
-
-        return messageDiv;
+    isRecommendationStale() {
+      if (!this.state.recommendation || !this.state.recommendationRequestKey) return false;
+      return this.state.recommendationRequestKey !== this.getRecommendationRequestKey();
     }
 
-    updateMessage(messageElement, newText) {
-        const contentDiv = messageElement.querySelector('.message-content');
-        contentDiv.innerHTML = newText;
-        messageElement.classList.remove('loading');
-        if (this.currentUserId) {
-            this.saveCurrentUserState();
-        }
+    renderRecommendationRefreshHint() {
+      if (!this.recommendationRefreshHint) return;
+      const shouldShow = this.state.recommendation && this.isRecommendationStale();
+      this.recommendationRefreshHint.hidden = !shouldShow;
+      if (shouldShow) {
+        this.recommendationRefreshHint.textContent = 'You have added new foods since your last recommendation. Generate updated recommendations to refresh goals, gaps, and model outputs.';
+      } else {
+        this.recommendationRefreshHint.textContent = '';
+      }
     }
 
-    async handleAnalyze() {
-        // Validate user info - provide specific guidance
-        const missingFields = [];
-        
-        if (!this.userInfo.gender) missingFields.push('Gender');
-        if (!this.userInfo.age) missingFields.push('Age');
-        if (!this.userInfo.height) missingFields.push('Height');
-        if (!this.userInfo.weight) missingFields.push('Weight');
-        if (!this.userInfo.activity || this.userInfo.activity === '') missingFields.push('Activity Level');
-        if (!this.userInfo.diet || this.userInfo.diet === '') missingFields.push('Diet Plan');
-        if (!this.userInfo.preference || this.userInfo.preference === '') missingFields.push('Food Preference');
-
-        if (missingFields.length > 0) {
-            this.addMessage(`📋 Missing information needed:\n• ${missingFields.join('\n• ')}\n\nPlease fill in the form on the left, then try again.`, 'bot');
-            return;
-        }
-
-        // Check if at least some food has been logged
-        if (this.dailyNutrition.carbs === 0 && this.dailyNutrition.protein === 0 && this.dailyNutrition.fat === 0) {
-            this.addMessage('🍽️ No food logged yet. Please add some food items first, then I can give you recommendations!', 'bot');
-            return;
-        }
-
-        const loadingMsg = this.addMessage('📊 Analyzing your nutrition and generating personalized recommendations...', 'bot', true);
-
-        try {
-            const response = await fetch('/api/calculate-recommendation', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    user_id: this.userRecordId,
-                    user_info: this.userInfo,
-                    daily_nutrition: this.dailyNutrition
-                })
-            });
-
-            let result;
-            if (response.headers.get('content-type')?.includes('application/json')) {
-                result = await response.json();
-            } else {
-                const text = await response.text();
-                if (!response.ok) {
-                    this.updateMessage(loadingMsg, `❌ Error (${response.status}): ${text?.slice(0, 300) || 'Unable to generate recommendation'}`);
-                    return;
-                }
-                // Fallback wrapper if server returned plain text success
-                result = { recommendation: null, raw: text };
-            }
-
-            if (!response.ok) {
-                this.updateMessage(loadingMsg, `❌ Error: ${result?.error || 'Unable to generate recommendation'}`);
-                return;
-            }
-
-            const rec = result.recommendation;
-            if (result.user_id) {
-                this.userRecordId = result.user_id;
-                this.saveData();
-            }
-            this._lastRecommendation = rec;
-            const responseMsg = this.generateRecommendationResponse(rec);
-            this.updateMessage(loadingMsg, responseMsg);
-
-            // Store recommendation for further use
-            sessionStorage.setItem('lastRecommendation', JSON.stringify(rec));
-            this._updateProgressBars();
-
-        } catch (error) {
-            console.error('Error:', error);
-            this.updateMessage(loadingMsg, '❌ Error generating recommendation. Please try again.');
-        }
+    hasPreferredFoods() {
+      return !!String(this.state.profile?.preferred_foods || '').trim();
     }
 
-    updateAnalyzeButtonStatus() {
-        // Enable/disable button based on current state
-        const hasUserInfo = this.userInfo.gender && this.userInfo.age && this.userInfo.height && this.userInfo.weight;
-        const hasFoodLogged = this.dailyNutrition.carbs > 0 || this.dailyNutrition.protein > 0 || this.dailyNutrition.fat > 0 || (this.dailyNutrition.calories || 0) > 0;
-        
-        if (hasUserInfo && hasFoodLogged) {
-            this.analyzeBtn.style.opacity = '1';
-            this.analyzeBtn.style.cursor = 'pointer';
-            this.analyzeBtn.title = 'Ready! Click to get recommendations';
-        } else {
-            this.analyzeBtn.style.opacity = '0.7';
-            this.analyzeBtn.style.cursor = 'not-allowed';
-            
-            if (!hasUserInfo) {
-                this.analyzeBtn.title = 'Please fill in your personal info first';
-            } else {
-                this.analyzeBtn.title = 'Please add at least one food item first';
-            }
-        }
+    renderCustomRecipeSection() {
+      if (!this.customRecipeCard) return;
+
+      if (typeof this.state.customRecipeCollapsed !== 'boolean') {
+        this.state.customRecipeCollapsed = this.hasPreferredFoods();
+      }
+
+      const collapsed = !!this.state.customRecipeCollapsed;
+      this.customRecipeCard.classList.toggle('is-collapsed', collapsed);
+      this.toggleCustomRecipeBtn.textContent = collapsed ? 'Show' : 'Hide';
+
+      const preferredFoods = String(this.state.profile?.preferred_foods || '').trim();
+      if (collapsed && preferredFoods) {
+        this.customRecipeStatus.hidden = false;
+        this.customRecipeStatus.textContent = `Hidden because profile already has preferred foods: ${preferredFoods}`;
+      } else if (collapsed) {
+        this.customRecipeStatus.hidden = false;
+        this.customRecipeStatus.textContent = 'Custom recipe builder is hidden.';
+      } else {
+        this.customRecipeStatus.hidden = true;
+        this.customRecipeStatus.textContent = '';
+      }
     }
 
-    generateRecommendationResponse(rec) {
-        // Generate multiple recommendation solutions
-        let allSolutionsHTML = '';
-        const plannerId = `recipe-planner-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-        this._recipePlanners[plannerId] = { createdAt: Date.now() };
-        const plannerHTML = `
-<div style="margin: 18px 0 0 0; padding-top: 16px; border-top: 2px solid var(--border);">
-    <div style="font-weight: 600; color: var(--text); font-size: 14px; margin-bottom: 10px;">🎯 Build Recipes From Foods You Want</div>
-    <div style="font-size: 12px; color: var(--muted); margin-bottom: 10px;">Enter foods like <strong>chicken breast, broccoli, noodles</strong>. Recipe 1 will use all of them. Recipe 2-4 can use subsets to better meet your supplement needs.</div>
-    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <input id="${plannerId}-input" type="text" placeholder="e.g., chicken breast, broccoli, noodles" style="flex:1; min-width:240px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:13px;" onkeydown="if(event.key==='Enter'){event.preventDefault(); window._chatbot.generateCustomRecipes('${plannerId}');}">
-        <button type="button" class="btn-primary" style="text-decoration:none;" onclick="window._chatbot.generateCustomRecipes('${plannerId}')">Calculate Recipes</button>
-    </div>
-    <div id="${plannerId}-results" style="margin-top: 12px;"></div>
-</div>`;
-        
-        if (rec.results.length > 0) {
-            rec.results.forEach((result, index) => {
-                const [foods, carbSup, proteinSup, fatSup, folderName] = result;
-                
-                let foodList = '';
-                if (foods.length > 0) {
-                    foodList = foods.map(f => {
-                        const dimensions = f.x && f.y && f.z 
-                            ? `<span style="font-size: 11px; color: var(--muted); margin-left: 8px;">(${f.x}mm × ${f.y}mm × ${f.z}mm)</span>`
-                            : '';
-                        return `<li>${f.name}: ${f.gram}g ${dimensions}</li>`;
-                    }).join('');
-                } else {
-                    foodList = '<li>No specific recommendations at this time</li>';
-                }
+    toggleCustomRecipeSection() {
+      this.state.customRecipeCollapsed = !this.state.customRecipeCollapsed;
+      this.renderCustomRecipeSection();
+    }
 
-                const supplementInfo = `
-<div style="margin-top: 12px; padding: 10px; background: #f0f0f0; border-left: 3px solid var(--accent); border-radius: 4px; font-size: 12px;">
-    <strong>Supplement Totals:</strong><br>
-    Carbs: <strong>${carbSup}g</strong> | Protein: <strong>${proteinSup}g</strong> | Fat: <strong>${fatSup}g</strong>
-</div>`;
+    buildInlineProfileEditor(user, active) {
+      const u = user?.user_info || {};
+      const userId = this.escape(user?.user_id || '');
+      const summaryRowHtml = `
+        <div class="user-card-main">
+          <div><strong>${this.escape(u.name || user?.user_id || '')}</strong><div class="muted">${this.escape(user?.user_id || '')}</div></div>
+          <div class="stack-actions">
+            <button class="btn-secondary slim ${active ? 'current-state' : ''}" data-user-action="switch" data-user-id="${userId}" ${active ? 'disabled' : ''}>${active ? 'Current' : 'Switch'}</button>
+            <button class="btn-secondary slim danger" data-user-action="delete" data-user-id="${userId}">Delete</button>
+          </div>
+        </div>
+      `;
+      return `
+        <details class="profile-dropdown inline-profile-dropdown" ${active ? 'open' : ''}>
+          <summary class="profile-dropdown-summary profile-user-summary">${summaryRowHtml}</summary>
+          <div class="profile-dropdown-body">
+            <form class="profile-grid" data-profile-form="${userId}">
+              <label>Username
+                <input type="text" name="name" value="${this.escape(u.name || '')}" required>
+              </label>
+              <label>Gender
+                <select name="gender" required>
+                  <option value="">Select</option>
+                  <option value="0" ${String(u.gender ?? '') === '0' ? 'selected' : ''}>Male</option>
+                  <option value="1" ${String(u.gender ?? '') === '1' ? 'selected' : ''}>Female</option>
+                </select>
+              </label>
+              <label>Age
+                <input type="number" name="age" min="1" value="${this.escape(u.age ?? '')}" required>
+              </label>
+              <label>Height (cm)
+                <input type="number" name="height" step="0.1" min="1" value="${this.escape(u.height ?? '')}" required>
+              </label>
+              <label>Weight (kg)
+                <input type="number" name="weight" step="0.1" min="1" value="${this.escape(u.weight ?? '')}" required>
+              </label>
+              <label>Activity Level
+                <select name="activity" required>
+                  <option value="">Select</option>
+                  <option value="0" ${String(u.activity ?? '') === '0' ? 'selected' : ''}>Sedentary</option>
+                  <option value="1" ${String(u.activity ?? '') === '1' ? 'selected' : ''}>Low Active</option>
+                  <option value="2" ${String(u.activity ?? '') === '2' ? 'selected' : ''}>Active</option>
+                  <option value="3" ${String(u.activity ?? '') === '3' ? 'selected' : ''}>Very Active</option>
+                </select>
+              </label>
+              <label>Diet
+                <select name="diet" required>
+                  <option value="">Select</option>
+                  <option value="0" ${String(u.diet ?? '') === '0' ? 'selected' : ''}>Balanced</option>
+                  <option value="1" ${String(u.diet ?? '') === '1' ? 'selected' : ''}>Low Fat</option>
+                  <option value="2" ${String(u.diet ?? '') === '2' ? 'selected' : ''}>Low Carb</option>
+                  <option value="3" ${String(u.diet ?? '') === '3' ? 'selected' : ''}>High Protein</option>
+                </select>
+              </label>
+              <label>Preference
+                <select name="preference" required>
+                  <option value="">Select</option>
+                  <option value="0" ${String(u.preference ?? '') === '0' ? 'selected' : ''}>Meat-based</option>
+                  <option value="1" ${String(u.preference ?? '') === '1' ? 'selected' : ''}>Plant-based</option>
+                </select>
+              </label>
+              <label>Preferred Foods (optional)
+                <input type="text" name="preferred_foods" value="${this.escape(u.preferred_foods || '')}" placeholder="e.g., tofu, oats, broccoli">
+              </label>
+            </form>
+            <div class="inline-form-row">
+              <button type="button" class="btn-primary" data-save-profile data-user-id="${userId}">Save Profile</button>
+            </div>
+          </div>
+        </details>
+      `;
+    }
 
-                allSolutionsHTML += `
-<div style="margin: 16px 0; padding: 14px; background: #ffffff; border: 2px solid var(--accent); border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
-    <div style="font-weight: 700; margin-bottom: 12px; color: var(--accent); font-size: 15px;">💡 Option ${index + 1}</div>
-    <div style="margin-bottom: 12px;">
-        <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px; color: var(--text);">Recommended Foods:</div>
-        <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: var(--text-secondary);">
-            ${foodList}
-        </ul>
-    </div>
-    ${supplementInfo}
-    ${foods && foods.some(f => f.mesh) ? `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top: 12px;"><a href="#" class="btn-primary" style="display:inline-block; text-decoration: none;" onclick="window._chatbot.downloadStlFolder(${index}); return false;">📁 Download STL Folder</a><a href="#" class="btn-primary" style="display:inline-block; text-decoration: none;" onclick="window._chatbot.downloadStlZip(${index}); return false;">📦 Download ZIP</a></div>${folderName ? `<div style="font-size:11px; color: var(--muted); margin-top:6px;">Folder: ${folderName}</div>` : ''}` : ''}
-</div>`;
-            });
-        } else {
-            allSolutionsHTML = '<div style="padding: 14px; background: #ffffff; border: 1px solid var(--border); border-radius: 8px; text-align: center; color: var(--muted);">No specific food recommendations at this time</div>';
-        }
+    renderActiveUser() {
+      const active = this.state.activeUser;
+      this.activeUserName.textContent = active ? (active.user_info?.name || active.user_id || 'Unknown') : 'Guest';
+      
+      if (active) {
+        const name = active.user_info?.name || active.user_id || 'Unknown';
+        const userId = active.user_id;
+        this.dashboardUserSummary.innerHTML = `${name} <span class="user-id-display">(${this.escape(shortId(userId))})</span>`;
+        this.dashboardUserSummary.classList.remove('is-disabled');
+      } else {
+        this.dashboardUserSummary.textContent = 'No active user yet. Create one in Users / Profiles.';
+        this.dashboardUserSummary.classList.remove('is-disabled');
+      }
+    }
 
-        return `
-📊 <strong style="font-size: 16px;">Your Nutrition Recommendation</strong>
+    renderSummary() {
+      const t = this.calculateTotals();
+      if (this.summary.calories) this.summary.calories.textContent = round(t.calories, 1);
+      if (this.summary.carbs) this.summary.carbs.textContent = round(t.carbs, 2);
+      if (this.summary.protein) this.summary.protein.textContent = round(t.protein, 2);
+      if (this.summary.fat) this.summary.fat.textContent = round(t.fat, 2);
 
-<div style="margin: 14px 0; padding: 14px; background: #ffffff; border: 1px solid var(--border); border-radius: 10px;">
-    <div style="margin-bottom: 14px;">
-        <div style="font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Daily Energy Goal</div>
-        <div style="font-size: 20px; font-weight: 700; color: var(--accent);">${rec.calories} kcal</div>
-    </div>
-    
-    <div style="overflow-x: auto;">
-        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-            <thead>
-                <tr style="background: #f9fafb; border-bottom: 2px solid var(--border);">
-                    <th style="padding: 10px 8px; text-align: left; font-weight: 600; color: var(--text);">Nutrient</th>
-                    <th style="padding: 10px 8px; text-align: right; font-weight: 600; color: var(--text);">Target</th>
-                    <th style="padding: 10px 8px; text-align: right; font-weight: 600; color: var(--text);">Current</th>
-                    <th style="padding: 10px 8px; text-align: right; font-weight: 600; color: var(--text);">Need</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr style="border-bottom: 1px solid var(--border);">
-                    <td style="padding: 10px 8px;">🥔 Carbs</td>
-                    <td style="padding: 10px 8px; text-align: right; font-weight: 600;">${rec.carbohydrate_intake}g</td>
-                    <td style="padding: 10px 8px; text-align: right;">${this.dailyNutrition.carbs}g</td>
-                    <td style="padding: 10px 8px; text-align: right; font-weight: 600; color: ${rec.carbohydrate_needed <= 0 ? '#22c55e' : 'var(--accent)'};">${rec.carbohydrate_needed}g</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border);">
-                    <td style="padding: 10px 8px;">🍗 Protein</td>
-                    <td style="padding: 10px 8px; text-align: right; font-weight: 600;">${rec.protein_intake}g</td>
-                    <td style="padding: 10px 8px; text-align: right;">${this.dailyNutrition.protein}g</td>
-                    <td style="padding: 10px 8px; text-align: right; font-weight: 600; color: ${rec.protein_needed <= 0 ? '#22c55e' : 'var(--accent)'};">${rec.protein_needed}g</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 8px;">🥑 Fat</td>
-                    <td style="padding: 10px 8px; text-align: right; font-weight: 600;">${rec.fat_intake}g</td>
-                    <td style="padding: 10px 8px; text-align: right;">${this.dailyNutrition.fat}g</td>
-                    <td style="padding: 10px 8px; text-align: right; font-weight: 600; color: ${rec.fat_needed <= 0 ? '#22c55e' : 'var(--accent)'};">${rec.fat_needed}g</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-</div>
+      const r = this.getTargetModel();
+      if (!r) {
+        this.targetProgressView.textContent = 'Save a valid profile (age, height, weight, gender, activity, diet) to show target progress.';
+        return;
+      }
+      const progressData = [
+        { label: 'Calories', current: t.calories, target: r.calories, unit: 'kcal', keyClass: 'calories' },
+        { label: 'Carbs', current: t.carbs, target: r.carbohydrate_intake, unit: 'g', keyClass: 'carbs' },
+        { label: 'Protein', current: t.protein, target: r.protein_intake, unit: 'g', keyClass: 'protein' },
+        { label: 'Fat', current: t.fat, target: r.fat_intake, unit: 'g', keyClass: 'fat' },
+      ];
+      this.targetProgressView.innerHTML = `
+        ${progressData.map((it) => this.targetProgressRowHtml(it.label, it.current, it.target, it.unit, it.keyClass)).join('')}
+      `;
+    }
 
-${plannerHTML}
+    renderTimeline() {
+      const entries = this.entriesForSelectedDate();
+      const html = entries.length
+        ? entries.map((entry) => this.entryCardHtml(entry)).join('')
+        : '<div class="empty-state">No entries yet for this day.</div>';
+      this.timeline.innerHTML = html;
+      this.timeline.querySelectorAll('[data-action]').forEach((btn) => {
+        btn.addEventListener('click', (e) => this.handleEntryAction(e.currentTarget));
+      });
+    }
 
-<div style="margin: 18px 0 0 0; padding-top: 16px; border-top: 2px solid var(--border);">
-    <div style="font-weight: 600; color: var(--text); font-size: 14px; margin-bottom: 12px;">🍽️ Suggested Food Combinations</div>
-    ${allSolutionsHTML}
-</div>
+    renderDashboard() {
+      this.dashboardIntakeList.innerHTML = this.timeline.innerHTML;
+      this.dashboardIntakeList.querySelectorAll('[data-action]').forEach((btn) => {
+        btn.addEventListener('click', (e) => this.handleEntryAction(e.currentTarget));
+      });
 
-<div style="padding: 12px; background: rgba(34, 197, 94, 0.08); border-left: 4px solid #22c55e; border-radius: 6px; font-size: 13px; color: var(--text-secondary);">
-    <strong style="color: #22c55e;">✓ Keep tracking</strong> your meals to reach your daily targets! 🎯
-</div>
+      if (!this.state.recommendation) {
+        this.recommendationSnapshot.classList.add('is-empty');
+        this.recommendationSnapshot.textContent = 'No recommendation generated yet.';
+      } else {
+        this.recommendationSnapshot.classList.remove('is-empty');
+        const r = this.state.recommendation;
+        this.recommendationSnapshot.innerHTML = `
+          <div>Daily Goal: <strong>${round(r.calories, 1)} kcal</strong></div>
+          <div>Need: ${formatNutrition(r.calories_needed || 0, r.carbohydrate_needed, r.protein_needed, r.fat_needed)}</div>
         `;
+      }
+
+      this.drawTrend();
     }
 
-    _escapeHtml(text) {
-        return String(text ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+    getTrendCanvas() {
+      return document.getElementById('trend-canvas');
     }
 
-    renderCustomRecipeResults(data) {
-        const recipes = Array.isArray(data.recipes) ? data.recipes : [];
-        const unresolved = Array.isArray(data.unresolved_foods) ? data.unresolved_foods : [];
-        const advice = data.advice || {};
+    resizeTrendCanvas(canvas) {
+      if (!canvas) return null;
+      const cssWidth = Math.max(1, canvas.clientWidth || canvas.parentElement?.clientWidth || 0);
+      const cssHeight = Math.max(1, canvas.clientHeight || Math.round(cssWidth * 0.32));
+      const pixelRatio = window.devicePixelRatio || 1;
+      const nextWidth = Math.max(1, Math.round(cssWidth * pixelRatio));
+      const nextHeight = Math.max(1, Math.round(cssHeight * pixelRatio));
 
-        const unresolvedHtml = unresolved.length
-            ? `<div style="margin-bottom: 10px; padding: 10px; background: #fff7ed; border-left: 3px solid var(--accent); border-radius: 6px; font-size: 12px; color: var(--text-secondary);"><strong>Could not resolve:</strong> ${unresolved.map(item => this._escapeHtml(item)).join(', ')}</div>`
-            : '';
+      if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+        canvas.width = nextWidth;
+        canvas.height = nextHeight;
+      }
 
-        const adviceFoods = Array.isArray(advice.suggested_foods) ? advice.suggested_foods : [];
-        const adviceHtml = (advice.message || adviceFoods.length)
-            ? `<div style="margin-bottom: 10px; padding: 10px; background: #eefbf3; border-left: 3px solid #22c55e; border-radius: 6px; font-size: 12px; color: var(--text-secondary);"><strong>Advice:</strong> ${this._escapeHtml(advice.message || 'Consider adding these foods.')}${adviceFoods.length ? ` Suggested foods: <strong>${adviceFoods.map(item => this._escapeHtml(item)).join(', ')}</strong>.` : ''}</div>`
-            : '';
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      }
 
-        const recipesHtml = recipes.length ? recipes.map((recipe, idx) => {
-            const foods = (recipe.foods || []).map(food => `<li>${this._escapeHtml(food.name)}: ${food.gram}g</li>`).join('');
-            const supplied = recipe.supplied || {};
-            const usingAll = recipe.uses_all_requested ? '<div style="font-size:12px; color: var(--accent); margin-bottom: 8px;"><strong>Uses all requested foods</strong></div>' : '';
-            return `
-<div style="margin: 12px 0; padding: 12px; background: #ffffff; border: 1px solid var(--border); border-radius: 10px;">
-    <div style="font-weight: 700; margin-bottom: 8px; color: var(--text); font-size: 14px;">${this._escapeHtml(recipe.title || `Recipe ${idx + 1}`)}</div>
-    ${usingAll}
-    <ul style="margin: 0 0 8px 0; padding-left: 20px; font-size: 13px; color: var(--text-secondary);">${foods}</ul>
-    <div style="font-size: 12px; color: var(--muted); line-height: 1.5;">
-        Supplies: Carbs <strong>${supplied.carbs ?? 0}g</strong>, Protein <strong>${supplied.protein ?? 0}g</strong>, Fat <strong>${supplied.fat ?? 0}g</strong><br>
-        Exceed: <strong>${recipe.exceed_total ?? 0}g</strong> | Remaining gap: <strong>${recipe.shortfall_total ?? 0}g</strong>
-    </div>
-</div>`;
-        }).join('') : '<div style="padding: 12px; background: #ffffff; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px;">No recipes could be calculated from those foods.</div>';
-
-        return `${unresolvedHtml}${adviceHtml}${recipesHtml}`;
+      return {
+        width: cssWidth,
+        height: cssHeight,
+        ctx,
+      };
     }
 
-    async generateCustomRecipes(plannerId) {
-        const inputEl = document.getElementById(`${plannerId}-input`);
-        const resultsEl = document.getElementById(`${plannerId}-results`);
-        if (!inputEl || !resultsEl) return;
+    drawTrend() {
+      const canvas = this.getTrendCanvas();
+      if (!canvas) return;
+      const sizing = this.resizeTrendCanvas(canvas);
+      if (!sizing || !sizing.ctx) return;
+      const { width, height, ctx } = sizing;
 
-        const foodText = (inputEl.value || '').trim();
-        if (!foodText) {
-            resultsEl.innerHTML = '<div style="padding: 10px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; font-size: 12px; color: var(--text-secondary);">Please enter foods like chicken breast, broccoli, noodles.</div>';
-            return;
-        }
-
-        resultsEl.innerHTML = '<div style="padding: 10px; font-size: 12px; color: var(--muted);">Calculating recipe amounts...</div>';
-
-        try {
-            const response = await fetch('/api/calculate-custom-recipes', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    user_info: this.userInfo,
-                    daily_nutrition: this.dailyNutrition,
-                    food_text: foodText
-                })
-            });
-
-            const data = await response.json();
-            if (!response.ok) {
-                resultsEl.innerHTML = `<div style="padding: 10px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; font-size: 12px; color: var(--text-secondary);">${this._escapeHtml(data.error || 'Could not calculate recipes.')}</div>`;
-                return;
-            }
-
-            resultsEl.innerHTML = this.renderCustomRecipeResults(data);
-        } catch (error) {
-            console.error('Custom recipe generation failed:', error);
-            resultsEl.innerHTML = '<div style="padding: 10px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; font-size: 12px; color: var(--text-secondary);">Could not calculate recipes right now.</div>';
-        }
+      ctx.clearRect(0, 0, width, height);
+      const values = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const totals = this.calculateTotals(this.state.entriesByDate[key] || []);
+        values.push(totals.calories || 0);
+      }
+      const max = Math.max(1, ...values);
+      ctx.strokeStyle = '#0d8f6f';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      values.forEach((v, idx) => {
+        const x = 15 + (idx * (width - 30) / 6);
+        const y = height - 15 - ((v / max) * (height - 30));
+        if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
     }
 
-    async downloadStlFolder(optionIndex) {
-        try {
-            if (!window.showDirectoryPicker) {
-                await this.downloadStlZip(optionIndex);
-                return;
-            }
-
-            const rec = this._lastRecommendation || JSON.parse(sessionStorage.getItem('lastRecommendation') || 'null');
-            const result = rec?.results?.[optionIndex];
-            if (!result) {
-                this.addMessage('⚠️ No recommendation data found for this option.', 'bot');
-                return;
-            }
-
-            const [foods, , , , folderHint] = result;
-            const meshFiles = (foods || []).map(f => f.mesh).filter(Boolean);
-            if (meshFiles.length === 0) {
-                this.addMessage('⚠️ No STL files available for this option.', 'bot');
-                return;
-            }
-
-            const now = new Date();
-            const y = now.getFullYear();
-            const m = String(now.getMonth() + 1).padStart(2, '0');
-            const d = String(now.getDate()).padStart(2, '0');
-            const folderName = folderHint || `${y}${m}${d}_option${optionIndex + 1}`;
-
-            const parentHandle = await window.showDirectoryPicker();
-            const folderHandle = await parentHandle.getDirectoryHandle(folderName, { create: true });
-
-            for (const meshName of meshFiles) {
-                const url = `/download-stl/${encodeURIComponent(meshName)}`;
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`Failed to download ${meshName}: ${response.status}`);
-                }
-                const blob = await response.blob();
-                const fileHandle = await folderHandle.getFileHandle(meshName, { create: true });
-                const writable = await fileHandle.createWritable();
-                await writable.write(blob);
-                await writable.close();
-            }
-
-            this.addMessage(`✅ Saved ${meshFiles.length} STL files to folder <strong>${folderName}</strong>.`, 'bot');
-        } catch (error) {
-            const isAbort = String(error?.name || '').toLowerCase() === 'aborterror';
-            if (!isAbort) {
-                console.error('Folder save failed:', error);
-                this.addMessage(`❌ Failed to save STL folder: ${error?.message || 'Unknown error'}`, 'bot');
-            }
-        }
+    handleWindowResize() {
+      this.drawTrend();
     }
 
-    async downloadStlZip(optionIndex) {
-        const rec = this._lastRecommendation || JSON.parse(sessionStorage.getItem('lastRecommendation') || 'null');
-        const result = rec?.results?.[optionIndex];
-        if (!result) {
-            this.addMessage('⚠️ No recommendation data found for this option.', 'bot');
-            return;
-        }
-
-        const [foods, , , , folderHint] = result;
-        const meshFiles = (foods || []).map(f => f.mesh).filter(Boolean);
-        if (meshFiles.length === 0) {
-            this.addMessage('⚠️ No STL files available for this option.', 'bot');
-            return;
-        }
-
-        const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const d = String(now.getDate()).padStart(2, '0');
-        const folderName = folderHint || `${y}${m}${d}_option${optionIndex + 1}`;
-
-        this.addMessage('📦 Preparing ZIP download for your device...', 'bot');
-
-        try {
-            const response = await fetch('/download-stl-zip', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    files: meshFiles,
-                    folder_name: folderName
-                })
-            });
-
-            if (!response.ok) {
-                let errorText = 'ZIP download failed.';
-                try {
-                    const errJson = await response.json();
-                    errorText = errJson.error || errorText;
-                } catch (_) {}
-                throw new Error(errorText);
-            }
-
-            const blob = await response.blob();
-            const downloadUrl = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = downloadUrl;
-            a.download = `${folderName}.zip`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            window.URL.revokeObjectURL(downloadUrl);
-
-            this.addMessage(`✅ Download started: <strong>${folderName}.zip</strong>`, 'bot');
-        } catch (error) {
-            console.error('ZIP download failed:', error);
-            this.addMessage(`❌ Could not download ZIP: ${error?.message || 'Unknown error'}`, 'bot');
-        }
+    renderHistory() {
+      const entries = this.entriesForSelectedDate().slice().sort((a, b) => b.ts - a.ts);
+      this.historyList.innerHTML = entries.length
+        ? entries.map((e) => this.entryCardHtml(e)).join('')
+        : '<div class="empty-state">No history for selected date.</div>';
+      this.historyList.querySelectorAll('[data-action]').forEach((btn) => {
+        btn.addEventListener('click', (ev) => this.handleEntryAction(ev.currentTarget));
+      });
     }
 
-    undoLast() {
-        if (this._undoActions.length === 0 && this.conversationHistory.length === 0) {
-            this.addMessage('⚠️ Nothing to undo. No food entries found.', 'bot');
-            return;
-        }
-
-        const undoAction = this._undoActions.pop();
-        if (undoAction && undoAction.type === 'edit' && undoAction.entryId) {
-            const { entry } = this._getEntryById(undoAction.entryId);
-            if (entry) {
-                const currentNutrition = this._normalizeNutrition(entry.nutrition || {});
-                const previousNutrition = this._normalizeNutrition(undoAction.previousNutrition || {});
-                const deltaBack = {
-                    carbs: previousNutrition.carbs - currentNutrition.carbs,
-                    protein: previousNutrition.protein - currentNutrition.protein,
-                    fat: previousNutrition.fat - currentNutrition.fat,
-                    calories: previousNutrition.calories - currentNutrition.calories
-                };
-
-                entry.nutrition = this._roundNutrition({ ...previousNutrition });
-                entry.type = undoAction.previousType || entry.type;
-                if (undoAction.previousUpdatedAt) {
-                    entry.updated_at = undoAction.previousUpdatedAt;
-                } else {
-                    delete entry.updated_at;
-                }
-
-                this._applyNutritionDelta(deltaBack, true);
-                this._updateEntryMessageContent(entry);
-                this.saveData();
-                this.addMessage('↶ Undone: last edit was reverted and intake totals restored.', 'bot');
-                return;
-            }
-        }
-
-        if (undoAction && undoAction.type === 'trash') {
-            const restoredEntry = undoAction.entry;
-            const insertAt = Math.max(0, Math.min(undoAction.index, this.conversationHistory.length));
-            this.conversationHistory.splice(insertAt, 0, restoredEntry);
-
-            const restoredNutrition = this._normalizeNutrition(restoredEntry.nutrition || {});
-            this._applyNutritionDelta(restoredNutrition, false);
-
-            const trashedContent = this.messagesContainer.querySelector(`.message-content[data-trashed-entry-id="${restoredEntry.id}"]`);
-            if (trashedContent) {
-                trashedContent.innerHTML = this._renderFoodEntryMessage(restoredEntry);
-                trashedContent.removeAttribute('data-trashed-entry-id');
-                const trashedMessage = trashedContent.closest('.message');
-                if (trashedMessage) trashedMessage.classList.remove('trashed-entry-message');
-            } else {
-                this.addMessage(this._renderFoodEntryMessage(restoredEntry), 'bot');
-            }
-
-            this.saveData();
-            return;
-        }
-
-        if (undoAction && undoAction.type === 'add' && undoAction.entryId) {
-            const idx = this.conversationHistory.findIndex((entry) => entry && entry.id === undoAction.entryId);
-            if (idx >= 0) {
-                const removedEntry = this.conversationHistory.splice(idx, 1)[0];
-                const removedNutrition = this._normalizeNutrition(removedEntry.nutrition || {});
-                this._applyNutritionDelta({
-                    carbs: -removedNutrition.carbs,
-                    protein: -removedNutrition.protein,
-                    fat: -removedNutrition.fat,
-                    calories: -removedNutrition.calories
-                }, true);
-                const msgEl = this._findMessageByEntryId(undoAction.entryId);
-                if (msgEl) msgEl.remove();
-
-                const undoName = removedNutrition.food_name || removedEntry.label || removedEntry.input || 'food entry';
-                this.addMessage(`↶ Undone: <strong>${this._escapeHtml(undoName)}</strong> has been removed from your daily totals.`, 'bot');
-                this.saveData();
-                return;
-            }
-        }
-
-        // Get the last entry
-        const lastEntry = this.conversationHistory.pop();
-        const lastNutrition = lastEntry.nutrition;
-
-        this._applyNutritionDelta({
-            carbs: -(lastNutrition.carbs || 0),
-            protein: -(lastNutrition.protein || 0),
-            fat: -(lastNutrition.fat || 0),
-            calories: -(lastNutrition.calories || 0)
-        }, true);
-
-        const undoName = lastNutrition.food_name || lastEntry.label || lastEntry.input || 'food entry';
-        this.addMessage(`↶ Undone: <strong>${this._escapeHtml(undoName)}</strong> has been removed from your daily totals.`, 'bot');
+    setRecommendationLoading(isLoading, text = 'Loading recommendations...') {
+      if (!this.recommendationLoadingIndicator) return;
+      this.recommendationLoadingIndicator.hidden = !isLoading;
+      this.recommendationLoadingIndicator.classList.toggle('active', isLoading);
+      this.recommendationLoadingIndicator.classList.remove('done', 'error');
+      if (this.recommendationLoadingText) {
+        this.recommendationLoadingText.textContent = text;
+      }
     }
 
-    clearAll() {
-        if (this.dailyNutrition.carbs === 0 && this.dailyNutrition.protein === 0 && this.dailyNutrition.fat === 0 && (this.dailyNutrition.calories || 0) === 0) {
-            this.addMessage('⚠️ Nothing to clear. No food entries found.', 'bot');
-            return;
-        }
-        // Show custom confirm modal
-        this.clearConfirmModal.style.display = 'flex';
+    setRecommendationFinished(text = 'Recommendations finished.') {
+      if (!this.recommendationLoadingIndicator) return;
+      this.recommendationLoadingIndicator.hidden = false;
+      this.recommendationLoadingIndicator.classList.remove('active', 'error');
+      this.recommendationLoadingIndicator.classList.add('done');
+      if (this.recommendationLoadingText) {
+        this.recommendationLoadingText.textContent = text;
+      }
     }
 
-    _closeClearModal() {
-        this.clearConfirmModal.style.display = 'none';
+    setRecommendationFailed(text = 'Recommendation failed.') {
+      if (!this.recommendationLoadingIndicator) return;
+      this.recommendationLoadingIndicator.hidden = false;
+      this.recommendationLoadingIndicator.classList.remove('active', 'done');
+      this.recommendationLoadingIndicator.classList.add('error');
+      if (this.recommendationLoadingText) {
+        this.recommendationLoadingText.textContent = text;
+      }
     }
 
-    _confirmClear() {
-        this._closeClearModal();
-        // Snapshot for undo
-        this._clearSnapshot = {
-            dailyNutrition: { ...this.dailyNutrition },
-            conversationHistory: [...this.conversationHistory]
-        };
-        this.dailyNutrition = { carbs: 0, protein: 0, fat: 0, calories: 0 };
-        this.conversationHistory = [];
-        this.updateDisplay();
-        this.saveData();
-        this.updateAnalyzeButtonStatus();
+    renderRecommendationPanels() {
+      const r = this.state.recommendation;
+      if (!r) {
+        const msg = this.state.recommendationStatus || 'No recommendation yet.';
+        this.energyGoalView.textContent = msg;
+        this.nutrientGapView.textContent = msg;
+        this.suggestedCombosView.textContent = msg;
+        this.printingModelsView.textContent = this.state.recommendationStatus || 'No printable outputs yet.';
+        return;
+      }
 
-        // Add message with inline undo button
-        const msgId = 'undo-clear-msg-' + Date.now();
-        this.addMessage(
-            `✨ All food entries cleared. <button id="${msgId}" ` +
-            `style="margin-left:8px;padding:3px 10px;font-size:12px;cursor:pointer;` +
-            `background:#ff7a3d;color:#fff;border:none;border-radius:6px;" ` +
-            `onclick="window._chatbot.undoClear('${msgId}')">↩ Undo</button>`,
-            'bot'
-        );
+      const totals = this.calculateTotals();
+      this.energyGoalView.innerHTML = `<strong>${round(r.calories, 1)} kcal</strong> target  current ${round(totals.calories, 1)} kcal`;
 
-        // Auto-expire undo after 10 seconds
-        this._clearUndoTimer = setTimeout(() => {
-            this._clearSnapshot = null;
-            const btn = document.getElementById(msgId);
-            if (btn) btn.remove();
-        }, 10000);
+      this.nutrientGapView.innerHTML = `
+        <table class="gap-table">
+          <thead><tr><th>Nutrient</th><th>Target</th><th>Current</th><th>Need</th></tr></thead>
+          <tbody>
+            <tr><td>Carbs</td><td>${round(r.carbohydrate_intake, 2)}g</td><td>${round(totals.carbs, 2)}g</td><td>${round(r.carbohydrate_needed, 2)}g</td></tr>
+            <tr><td>Protein</td><td>${round(r.protein_intake, 2)}g</td><td>${round(totals.protein, 2)}g</td><td>${round(r.protein_needed, 2)}g</td></tr>
+            <tr><td>Fat</td><td>${round(r.fat_intake, 2)}g</td><td>${round(totals.fat, 2)}g</td><td>${round(r.fat_needed, 2)}g</td></tr>
+          </tbody>
+        </table>
+      `;
+
+      const combos = Array.isArray(r.best_matches) ? r.best_matches : [];
+      const comboAdvice = r.best_match_advice || {};
+      this.suggestedCombosView.innerHTML = combos.length
+        ? combos.map((c, i) => {
+            const foods = (c.foods || []).map((f) => `${f.name} ${f.gram}g`).join(', ');
+            return `<div class="combo-card"><strong>Option ${i + 1}</strong><div>${foods}</div><small>Supplies: Carbs ${round(c.supplied?.carbs || 0, 2)}g | Protein ${round(c.supplied?.protein || 0, 2)}g | Fat ${round(c.supplied?.fat || 0, 2)}g</small></div>`;
+          }).join('') + (comboAdvice.suggested_foods?.length ? `<div class="combo-note">Suggested additions: ${comboAdvice.suggested_foods.join(', ')}</div>` : '')
+        : 'No combination suggestions.';
+
+      const results = Array.isArray(r.results) ? r.results : [];
+      const modelCards = [];
+      results.forEach((res, idx) => {
+        const foods = res[0] || [];
+        const folderName = res[4] || '';
+        const objName = res[5] || '';
+        const files = foods.filter((f) => f.mesh);
+        if (!files.length && !objName) return;
+        modelCards.push(`
+          <div class="model-card">
+            <strong>Option ${idx + 1}</strong>
+            <div>${files.map((f) => `${f.name} (${f.x || '-'} x ${f.y || '-'} x ${f.z || '-'} mm)`).join('<br>')}</div>
+            <div class="inline-form-row">
+              <button class="btn-secondary slim" data-download-zip="${idx}">Download ZIP</button>
+              <button class="btn-secondary slim" data-download-stl="${idx}">Open STL List</button>
+              ${objName ? `<button class="btn-secondary slim" data-download-obj="${idx}">Download OBJ (stacked)</button>` : ''}
+            </div>
+            ${folderName ? `<small>Folder hint: ${folderName}</small>` : ''}
+          </div>
+        `);
+      });
+      this.printingModelsView.innerHTML = modelCards.length ? modelCards.join('') : 'No model assets in this recommendation.';
+      this.printingModelsView.querySelectorAll('[data-download-zip]').forEach((btn) => btn.addEventListener('click', () => this.downloadStlZip(Number(btn.dataset.downloadZip))));
+      this.printingModelsView.querySelectorAll('[data-download-stl]').forEach((btn) => btn.addEventListener('click', () => this.openStlList(Number(btn.dataset.downloadStl))));
+      this.printingModelsView.querySelectorAll('[data-download-obj]').forEach((btn) => btn.addEventListener('click', () => this.downloadObj(Number(btn.dataset.downloadObj))));
     }
 
-    undoClear(msgId) {
-        if (!this._clearSnapshot) return;
-        clearTimeout(this._clearUndoTimer);
-        this.dailyNutrition = this._clearSnapshot.dailyNutrition;
-        this.conversationHistory = this._clearSnapshot.conversationHistory;
-        this._clearSnapshot = null;
-        this.updateDisplay();
-        this.saveData();
-        this.updateAnalyzeButtonStatus();
-        // Remove the undo message entirely
-        const btn = document.getElementById(msgId);
-        if (btn) btn.closest('.message') && btn.closest('.message').remove();
-        this.addMessage('↩ Cleared entries have been restored!', 'bot');
+    renderUsers() {
+      if (!this.state.users.length) {
+        this.userListView.innerHTML = '<div class="empty-state">No users. Create one above.</div>';
+        return;
+      }
+      this.userListView.innerHTML = this.state.users.map((u) => {
+        const active = this.state.activeUserId === u.user_id;
+        return `
+          <div class="user-card ${active ? 'active' : ''}">
+            ${this.buildInlineProfileEditor(u, active)}
+          </div>
+        `;
+      }).join('');
+      this.userListView.querySelectorAll('[data-save-profile]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const userId = btn.dataset.userId;
+          const form = this.userListView.querySelector(`form[data-profile-form="${userId}"]`);
+          this.saveProfile(userId, form);
+        });
+      });
+      this.userListView.querySelectorAll('[data-user-action]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.handleUserAction(btn.dataset.userAction, btn.dataset.userId);
+        });
+      });
     }
 
-    resetDaily() {
-        this.dailyNutrition = { carbs: 0, protein: 0, fat: 0, calories: 0 };
-        this.conversationHistory = [];
-        this.updateDisplay();
-        this.saveData();
-        this.addMessage('✨ Daily tracker has been reset. Start tracking your meals!', 'bot');
-    }
-
-    // ─── Calendar ─────────────────────────────────────────────────────────────
-
-    async openCalendar() {
-        if (!this.currentUserId) {
-            alert('Please select a user account first.');
-            return;
-        }
-        // Persist today's intake before showing history
-        await this.saveDailyIntakeToBackend();
-
-        try {
-            const res = await fetch(`/api/daily-intake/${this.currentUserId}`);
-            if (!res.ok) throw new Error('Failed to load history');
-            const data = await res.json();
-            this.calendarHistory = data.history || [];
-        } catch (err) {
-            console.error('[Calendar] Failed to load history:', err);
-            this.calendarHistory = [];
-        }
-
-        const now = new Date();
-        this.calendarYear = now.getFullYear();
-        this.calendarMonth = now.getMonth(); // 0-indexed
-
-        this.calendarModal.style.display = 'flex';
-        this.renderCalendar();
-    }
-
-    closeCalendar() {
-        this.calendarModal.style.display = 'none';
-        const detail = document.getElementById('cal-day-detail');
-        if (detail) detail.style.display = 'none';
+    renderProfile() {
+      // Profiles are now rendered and editable per user row in renderUsers().
     }
 
     renderCalendar() {
-        const label = document.getElementById('cal-month-label');
-        const grid = document.getElementById('cal-grid');
-        const calView = document.getElementById('cal-calendar-view');
-        const detail = document.getElementById('cal-day-detail');
-        if (!grid) return;
+      const month = this.state.calendarMonth;
+      this.calendarMonthLabel.textContent = month.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+      const first = new Date(month.getFullYear(), month.getMonth(), 1);
+      const startOffset = first.getDay();
+      const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+      const cells = [];
+      for (let i = 0; i < startOffset; i++) cells.push('<div class="calendar-cell empty"></div>');
+      for (let d = 1; d <= daysInMonth; d++) {
+        const key = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const totals = this.calculateTotals(this.state.entriesByDate[key] || []);
+        const hasRec = !!this.state.entriesByDate[key]?.some((e) => e.recommendationSnapshot);
+        const isSelected = key === this.state.selectedDate;
+        cells.push(`
+          <button class="calendar-cell ${isSelected ? 'selected' : ''}" data-date="${key}" aria-pressed="${isSelected ? 'true' : 'false'}">
+            <strong>${d}</strong>
+            <span>${round(totals.calories, 1)} kcal</span>
+            <small>${hasRec ? 'Rec ✓' : ''}</small>
+          </button>
+        `);
+      }
+      this.calendarGrid.innerHTML = cells.join('');
+      this.calendarGrid.querySelectorAll('[data-date]').forEach((btn) => btn.addEventListener('click', () => this.selectDate(btn.dataset.date)));
+      this.renderCalendarDetail();
+    }
 
-        // Show calendar grid, hide detail
-        if (calView) calView.style.display = '';
-        if (detail) detail.style.display = 'none';
-        detail.innerHTML = '';
+    renderCalendarDetail() {
+      const key = this.state.selectedDate;
+      const entries = this.state.entriesByDate[key] || [];
+      const totals = this.calculateTotals(entries);
+      this.calendarDayDetail.innerHTML = `
+        <div><strong>${key}</strong></div>
+        <div>${formatNutrition(totals.calories, totals.carbs, totals.protein, totals.fat)}</div>
+        <div>${entries.length} entries</div>
+      `;
+    }
 
-        const monthNames = ['January','February','March','April','May','June',
-                            'July','August','September','October','November','December'];
-        label.textContent = `${monthNames[this.calendarMonth]} ${this.calendarYear}`;
+    entryCardHtml(entry) {
+      const n = entry.nutrition || {};
+      return `
+        <article class="timeline-item">
+          <div class="timeline-head">
+            <span class="source-badge source-${entry.source}">${entry.source}</span>
+            <strong>${entry.label}</strong>
+            <small>${new Date(entry.ts).toLocaleTimeString()}</small>
+          </div>
+          <div class="macro-line">${formatNutrition(n.calories, n.carbs, n.protein, n.fat)}</div>
+          <div class="stack-actions">
+            <button class="btn-secondary slim" data-action="edit" data-id="${entry.id}">Edit</button>
+            <button class="btn-secondary slim" data-action="delete" data-id="${entry.id}">Delete</button>
+            <button class="btn-secondary slim" data-action="duplicate" data-id="${entry.id}">Duplicate</button>
+          </div>
+        </article>
+      `;
+    }
 
-        // Build lookup map: date-string → history entry
-        const histMap = {};
-        (this.calendarHistory || []).forEach(e => { histMap[e.date] = e; });
+    async handleEntryAction(btn) {
+      const id = btn.dataset.id;
+      const action = btn.dataset.action;
+      const entries = this.entriesForSelectedDate();
+      const idx = entries.findIndex((e) => e.id === id);
+      if (idx < 0) return;
+      const entry = entries[idx];
 
-        // First weekday of month (0=Sun)
-        const firstDay = new Date(this.calendarYear, this.calendarMonth, 1).getDay();
-        const daysInMonth = new Date(this.calendarYear, this.calendarMonth + 1, 0).getDate();
-        const todayStr = new Date().toISOString().slice(0, 10);
-
-        grid.innerHTML = '';
-
-        // Leading empty cells
-        for (let i = 0; i < firstDay; i++) {
-            const blank = document.createElement('div');
-            blank.className = 'cal-cell cal-cell-empty';
-            grid.appendChild(blank);
+      if (action === 'edit') return this.openEntryEditor(entry);
+      if (action === 'duplicate') {
+        const next = deepCopy(this.state.entriesByDate);
+        const clone = deepCopy(entry);
+        clone.id = `entry-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        clone.ts = Date.now();
+        next[this.state.selectedDate] = [...entries, clone];
+        return this.applyStatePatch(next, 'duplicate');
+      }
+      if (action === 'delete') {
+        if (this.state.settings.confirmDelete) {
+          const confirmed = await this.showConfirmation(
+            'Delete Entry?',
+            'Delete this entry? You can undo.'
+          );
+          if (!confirmed) return;
         }
+        const next = deepCopy(this.state.entriesByDate);
+        next[this.state.selectedDate].splice(idx, 1);
+        return this.applyStatePatch(next, 'delete');
+      }
+    }
 
-        for (let d = 1; d <= daysInMonth; d++) {
-            const dateStr = `${this.calendarYear}-${String(this.calendarMonth + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-            const entry = histMap[dateStr];
-            const cell = document.createElement('div');
-            cell.className = 'cal-cell';
+    openEntryEditor(entry) {
+      this.entryEditModal.hidden = false;
+      const n = entry.nutrition || { calories: 0, carbs: 0, protein: 0, fat: 0 };
+      const imageDetails = Array.isArray(entry.details) ? entry.details : [];
+      const isImageEntry = entry.source === 'image';
 
-            if (dateStr === todayStr) cell.classList.add('cal-cell-today');
+      const imageRowsHtml = imageDetails.length
+        ? imageDetails.map((f, idx) => `
+          <tr data-edit-food-idx="${idx}">
+            <td><input type="text" class="edit-food-name" value="${this.escape(f.food_name || 'unknown food')}" placeholder="food name"></td>
+            <td><input type="number" step="0.1" class="edit-food-weight" value="${round(f.weight_g || 0, 1)}"></td>
+            <td><input type="number" step="0.1" class="edit-food-calories" value="${round(f.calories || 0, 1)}"></td>
+            <td><input type="number" step="0.01" class="edit-food-carbs" value="${round(f.carbs || 0, 2)}"></td>
+            <td><input type="number" step="0.01" class="edit-food-protein" value="${round(f.protein || 0, 2)}"></td>
+            <td><input type="number" step="0.01" class="edit-food-fat" value="${round(f.fat || 0, 2)}"></td>
+            <td><button type="button" class="btn-delete-food" data-delete-edit-food="${idx}">Delete</button></td>
+          </tr>
+        `).join('')
+        : '<tr><td colspan="7" class="muted">No food rows yet.</td></tr>';
 
-            const dayNum = document.createElement('div');
-            dayNum.className = 'cal-cell-day';
-            dayNum.textContent = d;
-            cell.appendChild(dayNum);
+      this.entryEditContent.innerHTML = `
+        <div class="edit-grid">
+          <label>Label<input id="edit-label" type="text" value="${this.escape(entry.label)}"></label>
+          <label>Calories<input id="edit-calories" type="number" step="0.1" value="${round(n.calories, 1)}"></label>
+          <label>Carbs (g)<input id="edit-carbs" type="number" step="0.1" value="${round(n.carbs, 2)}"></label>
+          <label>Protein (g)<input id="edit-protein" type="number" step="0.1" value="${round(n.protein, 2)}"></label>
+          <label>Fat (g)<input id="edit-fat" type="number" step="0.1" value="${round(n.fat, 2)}"></label>
+        </div>
+        ${isImageEntry ? `
+          <div class="inline-form-row" style="margin-top:8px;">
+            <strong>Image Food Details</strong>
+            <button id="add-edit-food-row" type="button" class="btn-secondary slim">Add Food Row</button>
+          </div>
+          <div class="inline-form-row">
+            <strong>Whole Nutrition Zoom</strong>
+            <input id="entry-scale-factor" type="number" step="0.05" min="0.1" value="1.10" style="width:110px;">
+            <button id="entry-scale-down" type="button" class="btn-secondary slim">Zoom Out</button>
+            <button id="entry-scale-up" type="button" class="btn-secondary slim">Zoom In</button>
+            <button id="entry-scale-apply" type="button" class="btn-secondary slim">Apply Factor</button>
+          </div>
+          <table class="food-edit-table">
+            <thead>
+              <tr>
+                <th>Food</th>
+                <th>Mass(g)</th>
+                <th>Calories</th>
+                <th>Carbs</th>
+                <th>Protein</th>
+                <th>Fat</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="entry-edit-food-body">
+              ${imageRowsHtml}
+            </tbody>
+          </table>
+          <div id="entry-edit-food-totals" class="muted"></div>
+        ` : ''}
+        <div class="modal-actions">
+          <button id="cancel-entry-edit" class="btn-secondary">Cancel</button>
+          <button id="save-entry-edit" class="btn-primary">Save Changes</button>
+        </div>
+      `;
 
-            if (entry) {
-                const n = entry.nutrition || {};
-                const kcal = Math.round((n.calories || 0) || ((n.carbs || 0) * 4 + (n.protein || 0) * 4 + (n.fat || 0) * 9));
-                const kcalDiv = document.createElement('div');
-                kcalDiv.className = 'cal-cell-kcal';
-                kcalDiv.textContent = `${kcal} kcal`;
-                cell.appendChild(kcalDiv);
+      const recalcEditorTotals = () => {
+        if (!isImageEntry) return;
+        const rows = Array.from(this.entryEditContent.querySelectorAll('#entry-edit-food-body tr[data-edit-food-idx]'));
+        let total = { calories: 0, carbs: 0, protein: 0, fat: 0 };
+        rows.forEach((row) => {
+          total.calories += Number(row.querySelector('.edit-food-calories')?.value || 0);
+          total.carbs += Number(row.querySelector('.edit-food-carbs')?.value || 0);
+          total.protein += Number(row.querySelector('.edit-food-protein')?.value || 0);
+          total.fat += Number(row.querySelector('.edit-food-fat')?.value || 0);
+        });
+        document.getElementById('edit-calories').value = round(total.calories, 1);
+        document.getElementById('edit-carbs').value = round(total.carbs, 2);
+        document.getElementById('edit-protein').value = round(total.protein, 2);
+        document.getElementById('edit-fat').value = round(total.fat, 2);
+        const totalsView = this.entryEditContent.querySelector('#entry-edit-food-totals');
+        if (totalsView) {
+          totalsView.textContent = `Detail Totals: ${formatNutrition(total.calories, total.carbs, total.protein, total.fat)}`;
+        }
+      };
 
-                // Colour cell based on fill vs recommended
-                let pct = null;
-                if (entry.recommended && entry.recommended.calories) {
-                    pct = kcal / entry.recommended.calories;
-                }
-                if (pct === null) {
-                    cell.classList.add('cal-cell-has-data');
-                    cell.title = 'No target saved for this day';
-                } else if (pct >= 0.9 && pct <= 1.1) {
-                    cell.classList.add('cal-cell-good');
-                    cell.title = 'Healthy range';
-                } else if (pct >= 0.75 && pct < 0.9) {
-                    cell.classList.add('cal-cell-fair');
-                    cell.title = 'Slightly below target';
-                } else if (pct < 0.75) {
-                    cell.classList.add('cal-cell-low');
-                    cell.title = 'Too low';
-                } else if (pct > 1.1 && pct <= 1.25) {
-                    cell.classList.add('cal-cell-high');
-                    cell.title = 'Slightly above target';
-                } else {
-                    cell.classList.add('cal-cell-excess');
-                    cell.title = 'Too high';
-                }
+      if (isImageEntry) {
+        const body = this.entryEditContent.querySelector('#entry-edit-food-body');
+        const addBtn = this.entryEditContent.querySelector('#add-edit-food-row');
+        const scaleInput = this.entryEditContent.querySelector('#entry-scale-factor');
+        const scaleRows = (factor) => {
+          const f = Number(factor || 0);
+          if (!Number.isFinite(f) || f <= 0) {
+            this.showToast('Scale factor must be greater than 0.', 'warning');
+            return;
+          }
+          const rows = Array.from(this.entryEditContent.querySelectorAll('#entry-edit-food-body tr[data-edit-food-idx]'));
+          rows.forEach((row) => {
+            const map = ['weight', 'calories', 'carbs', 'protein', 'fat'];
+            map.forEach((key) => {
+              const el = row.querySelector(`.edit-food-${key}`);
+              if (!el) return;
+              el.value = round(Number(el.value || 0) * f, 2);
+            });
+          });
+          recalcEditorTotals();
+        };
 
-                cell.style.cursor = 'pointer';
-                cell.addEventListener('click', () => this.showDayDetail(dateStr, entry));
+        const downBtn = this.entryEditContent.querySelector('#entry-scale-down');
+        const upBtn = this.entryEditContent.querySelector('#entry-scale-up');
+        const applyBtn = this.entryEditContent.querySelector('#entry-scale-apply');
+        if (downBtn) downBtn.addEventListener('click', () => scaleRows(0.9));
+        if (upBtn) upBtn.addEventListener('click', () => scaleRows(1.1));
+        if (applyBtn) applyBtn.addEventListener('click', () => scaleRows(Number(scaleInput?.value || 1)));
+
+        if (addBtn && body) {
+          addBtn.addEventListener('click', () => {
+            const nextIdx = body.querySelectorAll('tr[data-edit-food-idx]').length;
+            const row = document.createElement('tr');
+            row.setAttribute('data-edit-food-idx', String(nextIdx));
+            row.innerHTML = `
+              <td><input type="text" class="edit-food-name" value="new food" placeholder="food name"></td>
+              <td><input type="number" step="0.1" class="edit-food-weight" value="0"></td>
+              <td><input type="number" step="0.1" class="edit-food-calories" value="0"></td>
+              <td><input type="number" step="0.01" class="edit-food-carbs" value="0"></td>
+              <td><input type="number" step="0.01" class="edit-food-protein" value="0"></td>
+              <td><input type="number" step="0.01" class="edit-food-fat" value="0"></td>
+              <td><button type="button" class="btn-delete-food" data-delete-edit-food="${nextIdx}">Delete</button></td>
+            `;
+            const empty = body.querySelector('td[colspan="7"]');
+            if (empty) empty.parentElement.remove();
+            body.appendChild(row);
+            recalcEditorTotals();
+          });
+
+          body.addEventListener('click', (ev) => {
+            const btn = ev.target.closest('[data-delete-edit-food]');
+            if (!btn) return;
+            const row = btn.closest('tr[data-edit-food-idx]');
+            if (row) row.remove();
+            if (!body.querySelector('tr[data-edit-food-idx]')) {
+              body.innerHTML = '<tr><td colspan="7" class="muted">No food rows yet.</td></tr>';
             }
+            recalcEditorTotals();
+          });
 
-            grid.appendChild(cell);
-        }
-
-        // Wire prev/next buttons (re-attach cleanly)
-        const prevBtn = document.getElementById('cal-prev');
-        const nextBtn = document.getElementById('cal-next');
-        const todayBtn = document.getElementById('cal-today');
-        prevBtn.onclick = () => {
-            this.calendarMonth--;
-            if (this.calendarMonth < 0) { this.calendarMonth = 11; this.calendarYear--; }
-            this.renderCalendar();
-        };
-        nextBtn.onclick = () => {
-            this.calendarMonth++;
-            if (this.calendarMonth > 11) { this.calendarMonth = 0; this.calendarYear++; }
-            this.renderCalendar();
-        };
-        if (todayBtn) {
-            todayBtn.onclick = () => this.goToTodayInCalendar();
-        }
-    }
-
-    goToTodayInCalendar() {
-        const now = new Date();
-        this.calendarYear = now.getFullYear();
-        this.calendarMonth = now.getMonth();
-        this.renderCalendar();
-    }
-
-    showDayDetail(dateStr, entry) {
-        const detail = document.getElementById('cal-day-detail');
-        const calView = document.getElementById('cal-calendar-view');
-        if (!detail) return;
-
-        const n = entry.nutrition || {};
-        const r = entry.recommended || {};
-
-        const actualKcal = Math.round((n.carbs || 0) * 4 + (n.protein || 0) * 4 + (n.fat || 0) * 9);
-        const recKcal = r.calories || null;
-
-        const fmt = (v) => Number(v || 0).toFixed(1);
-        const pctBar = (actual, target) => {
-            if (!target) return '';
-            const raw = Math.round((actual / target) * 100);
-            if (raw <= 100) {
-                const cls = raw <= 80 ? 'bar-low' : 'bar-mid';
-                return `<div class="cal-bar-wrap"><div class="cal-bar-fill ${cls}" style="width:${raw}%;"></div></div>`;
+          body.addEventListener('input', (ev) => {
+            if (ev.target && ev.target.className && String(ev.target.className).startsWith('edit-food-')) {
+              recalcEditorTotals();
             }
-            // Split: base + excess
-            const baseW   = (100 / raw * 100).toFixed(2);
-            const excessW = ((raw - 100) / raw * 100).toFixed(2);
-            const baseCls = raw <= 120 ? 'bar-over' : 'bar-danger';
-            return `<div class="cal-bar-wrap">` +
-                `<div class="cal-bar-fill ${baseCls} has-excess" style="width:${baseW}%;"></div>` +
-                `<div class="cal-bar-excess" style="width:${excessW}%;"></div>` +
-                `</div>`;
+          });
+        }
+        recalcEditorTotals();
+      }
+
+      document.getElementById('cancel-entry-edit').addEventListener('click', () => this.closeEntryEditor());
+      document.getElementById('save-entry-edit').addEventListener('click', () => {
+        const next = deepCopy(this.state.entriesByDate);
+        const entries = next[this.state.selectedDate] || [];
+        const idx = entries.findIndex((e) => e.id === entry.id);
+        if (idx < 0) return;
+        entries[idx].label = document.getElementById('edit-label').value.trim() || entries[idx].label;
+        entries[idx].nutrition = {
+          calories: Number(document.getElementById('edit-calories').value || 0),
+          carbs: Number(document.getElementById('edit-carbs').value || 0),
+          protein: Number(document.getElementById('edit-protein').value || 0),
+          fat: Number(document.getElementById('edit-fat').value || 0),
         };
 
-        const row = (icon, lbl, actual, target, unit) => `
-            <div class="cal-detail-row">
-                <span class="cal-detail-label">${icon} ${lbl}</span>
-                <span class="cal-detail-values">${fmt(actual)}${unit}${target ? ` / ${fmt(target)}${unit}` : ''}</span>
-            </div>
-            ${pctBar(actual, target)}`;
+        if (isImageEntry) {
+          const detailRows = Array.from(this.entryEditContent.querySelectorAll('#entry-edit-food-body tr[data-edit-food-idx]'));
+          entries[idx].details = detailRows.map((row, rowIdx) => ({
+            region_id: rowIdx + 1,
+            food_name: String(row.querySelector('.edit-food-name')?.value || '').trim() || 'unknown food',
+            weight_g: Number(row.querySelector('.edit-food-weight')?.value || 0),
+            calories: Number(row.querySelector('.edit-food-calories')?.value || 0),
+            carbs: Number(row.querySelector('.edit-food-carbs')?.value || 0),
+            protein: Number(row.querySelector('.edit-food-protein')?.value || 0),
+            fat: Number(row.querySelector('.edit-food-fat')?.value || 0),
+          }));
+        }
 
-        const [y, m, d] = dateStr.split('-');
-        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        const displayDate = `${monthNames[parseInt(m)-1]} ${parseInt(d)}, ${y}`;
-
-        detail.innerHTML = `
-            <div class="cal-detail-header">
-                <button type="button" class="cal-back-btn" onclick="window.chatbot.backToCalendar()">&#8592; Back</button>
-                <strong>${displayDate}</strong>
-            </div>
-            <div class="cal-detail-body">
-                <div class="cal-detail-row" style="margin-bottom:6px;">
-                    <span class="cal-detail-label">&#128293; Calories</span>
-                    <span class="cal-detail-values" style="font-weight:700;font-size:15px;">${actualKcal} kcal${recKcal ? ` / ${Math.round(recKcal)} kcal` : ''}</span>
-                </div>
-                ${recKcal ? pctBar(actualKcal, recKcal) : ''}
-                <div class="cal-detail-divider"></div>
-                ${row('&#127828;', 'Carbs',   n.carbs   || 0, r.carbs   || null, 'g')}
-                ${row('&#127831;', 'Protein', n.protein || 0, r.protein || null, 'g')}
-                ${row('&#129361;', 'Fat',     n.fat     || 0, r.fat     || null, 'g')}
-            </div>`;
-
-        // Swap views
-        if (calView) calView.style.display = 'none';
-        detail.style.display = 'block';
+        this.closeEntryEditor();
+        this.applyStatePatch(next, 'edit');
+      });
     }
 
-    backToCalendar() {
-        const detail = document.getElementById('cal-day-detail');
-        const calView = document.getElementById('cal-calendar-view');
-        if (detail) detail.style.display = 'none';
-        if (calView) calView.style.display = '';
+    closeEntryEditor() {
+      this.entryEditModal.hidden = true;
+      this.entryEditContent.innerHTML = '';
     }
-}
 
-// Initialize chatbot when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    window.chatbot = new NutritionChatbot();
-    window._chatbot = window.chatbot;
-});
+    undo() {
+      const a = this.state.historyUndo.pop();
+      if (!a) return;
+      this.state.historyRedo.push(a);
+      this.state.entriesByDate = deepCopy(a.prevState);
+      this.renderAll();
+      if (this.state.settings.autosave) this.saveDayToBackend();
+    }
+
+    redo() {
+      const a = this.state.historyRedo.pop();
+      if (!a) return;
+      this.state.historyUndo.push(a);
+      this.state.entriesByDate = deepCopy(a.nextState);
+      this.renderAll();
+      if (this.state.settings.autosave) this.saveDayToBackend();
+    }
+
+    async clearDay() {
+      const confirmed = await this.showConfirmation(
+        'Clear Day?',
+        'Clear all entries for selected day? Undo is available.'
+      );
+      if (!confirmed) return;
+      const next = deepCopy(this.state.entriesByDate);
+      next[this.state.selectedDate] = [];
+      this.applyStatePatch(next, 'clear-day');
+    }
+
+    async handleFoodSearch(e) {
+      e.preventDefault();
+      const text = this.foodSearchInput.value.trim();
+      if (!text) return;
+      this.foodSearchPreview.textContent = 'Searching...';
+
+      // Backend endpoint integration: /api/search-food
+      const r = await fetch(API.searchFood, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ food_input: text }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        this.foodSearchPreview.innerHTML = `<div class="error">${this.escape(data.error || 'Search failed')}</div>`;
+        return;
+      }
+
+      this.state.pendingFoodPreview = {
+        source: 'text',
+        label: data.original_input || text,
+        nutrition: data.nutrition || { calories: 0, carbs: 0, protein: 0, fat: 0 },
+        details: data.individual_foods || [],
+      };
+      this.foodSearchPreview.innerHTML = `
+        <div class="preview-card">
+          <div><strong>Preview</strong> ${this.escape(text)}</div>
+          <div>${formatNutrition(this.state.pendingFoodPreview.nutrition.calories, this.state.pendingFoodPreview.nutrition.carbs, this.state.pendingFoodPreview.nutrition.protein, this.state.pendingFoodPreview.nutrition.fat)}</div>
+          <div class="preview-actions">
+            <button id="confirm-food-add" class="btn-primary slim">Confirm Add</button>
+            <button id="edit-food-add" class="btn-secondary slim">Edit</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('confirm-food-add').addEventListener('click', () => this.commitPendingFood());
+      document.getElementById('edit-food-add').addEventListener('click', () => this.openFoodPreviewEditor());
+    }
+
+    openFoodPreviewEditor() {
+      if (!this.state.pendingFoodPreview) return;
+      
+      const p = this.state.pendingFoodPreview;
+      this.previewFoodLabel.textContent = `Editing: ${p.label}`;
+      this.previewCalories.value = round(p.nutrition.calories, 2);
+      this.previewCarbs.value = round(p.nutrition.carbs, 2);
+      this.previewProtein.value = round(p.nutrition.protein, 2);
+      this.previewFat.value = round(p.nutrition.fat, 2);
+      
+      this.foodPreviewEditModal.removeAttribute('hidden');
+    }
+
+    closeFoodPreviewEditor() {
+      this.foodPreviewEditModal.setAttribute('hidden', '');
+    }
+
+    commitPendingFoodWithEdits() {
+      if (!this.state.pendingFoodPreview) return;
+      
+      // Update nutrition values from the edit modal
+      this.state.pendingFoodPreview.nutrition = {
+        calories: this.toNumber(this.previewCalories.value, 0),
+        carbs: this.toNumber(this.previewCarbs.value, 0),
+        protein: this.toNumber(this.previewProtein.value, 0),
+        fat: this.toNumber(this.previewFat.value, 0),
+      };
+      
+      this.closeFoodPreviewEditor();
+      this.commitPendingFood();
+    }
+
+    commitPendingFood() {
+      if (!this.state.pendingFoodPreview) return;
+      const p = this.state.pendingFoodPreview;
+      const next = deepCopy(this.state.entriesByDate);
+      const arr = next[this.state.selectedDate] || [];
+      arr.push({
+        id: `entry-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        ts: Date.now(),
+        source: 'text',
+        label: p.label,
+        nutrition: {
+          calories: Number(p.nutrition.calories || 0),
+          carbs: Number(p.nutrition.carbs || 0),
+          protein: Number(p.nutrition.protein || 0),
+          fat: Number(p.nutrition.fat || 0),
+        },
+        details: p.details,
+      });
+      next[this.state.selectedDate] = arr;
+      this.foodSearchInput.value = '';
+      this.foodSearchPreview.innerHTML = '';
+      this.state.pendingFoodPreview = null;
+      this.applyStatePatch(next, 'add-food');
+    }
+
+    previewMacroDelta() {
+      const vals = Object.fromEntries(Object.entries(this.macroFields).map(([k, el]) => [k, Number(el.value || 0)]));
+      this.macroPreview.innerHTML = `<div class="preview-card">Delta preview: Calories ${round(vals.calories, 1)}  Carbs ${round(vals.carbs, 2)}  Protein ${round(vals.protein, 2)}  Fat ${round(vals.fat, 2)}</div>`;
+    }
+
+    async handleMacroSubmit(e) {
+      e.preventDefault();
+      const pairs = [
+        ['carbs', this.macroFields.carbs.value],
+        ['protein', this.macroFields.protein.value],
+        ['fat', this.macroFields.fat.value],
+        ['calories', this.macroFields.calories.value],
+      ].filter(([, v]) => String(v || '').trim() !== '' && Number(v) !== 0);
+
+      if (!pairs.length) {
+        this.macroPreview.innerHTML = '<div class="error">Enter at least one non-zero value.</div>';
+        return;
+      }
+
+      const summed = { carbs: 0, protein: 0, fat: 0, calories: 0 };
+      for (const [name, value] of pairs) {
+        let query = '';
+        if (name === 'calories') query = `${value} kcal`;
+        else query = `${value} ${name}`;
+
+        // Backend endpoint integration: /api/search-food supports direct macro syntax
+        const r = await fetch(API.searchFood, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ food_input: query }),
+        });
+        const data = await r.json();
+        if (!r.ok) {
+          this.macroPreview.innerHTML = `<div class="error">${this.escape(data.error || `Failed on ${name}`)}</div>`;
+          return;
+        }
+        summed.calories += Number(data.nutrition?.calories || 0);
+        summed.carbs += Number(data.nutrition?.carbs || 0);
+        summed.protein += Number(data.nutrition?.protein || 0);
+        summed.fat += Number(data.nutrition?.fat || 0);
+      }
+
+      const next = deepCopy(this.state.entriesByDate);
+      const arr = next[this.state.selectedDate] || [];
+      arr.push({
+        id: `entry-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        ts: Date.now(),
+        source: 'macros',
+        label: 'Direct macro adjustment',
+        nutrition: summed,
+      });
+      next[this.state.selectedDate] = arr;
+      Object.values(this.macroFields).forEach((el) => { el.value = ''; });
+      this.macroPreview.innerHTML = '';
+      this.applyStatePatch(next, 'add-macro');
+    }
+
+    async handleImageAnalyze(e) {
+      e.preventDefault();
+      if (!this.mealImage.files[0]) {
+        this.imageAnalysisResult.innerHTML = '<div class="error">Select an image first.</div>';
+        return;
+      }
+
+      const fd = new FormData();
+      fd.append('image', this.mealImage.files[0]);
+      if (this.imageHints.value.trim()) fd.append('food_hints', this.imageHints.value.trim());
+      if (this.imageContainerSize.value.trim()) fd.append('plate_diameter_cm', this.imageContainerSize.value.trim());
+
+      this.imageAnalysisResult.textContent = 'Analyzing image...';
+
+      // Backend endpoint integration: /api/analyze-image-nutrition
+      const r = await fetch(API.analyzeImage, { method: 'POST', body: fd });
+      const data = await r.json();
+      if (!r.ok) {
+        this.imageAnalysisResult.innerHTML = `<div class="error">${this.escape(data.error || 'Image analyze failed')}</div>`;
+        return;
+      }
+
+      this.state.pendingImagePreview = {
+        imageOrigin: data.image_origin,
+        analysisSource: data.analysis_source,
+        foodItems: (data.food_items || []).map((f, i) => ({ ...f, region_id: f.region_id || i + 1 })),
+      };
+      this.renderImagePreviewEditor();
+    }
+
+    renderUploadedImagePreview() {
+      if (!this.imageUploadPreview || !this.imageUploadPreviewImg) return;
+      const file = this.mealImage?.files?.[0];
+      if (!file) {
+        this.imageUploadPreview.hidden = true;
+        this.imageUploadPreviewImg.removeAttribute('src');
+        return;
+      }
+      this.imageUploadPreviewImg.src = URL.createObjectURL(file);
+      this.imageUploadPreview.hidden = false;
+    }
+
+    renderImagePreviewEditor() {
+      const p = this.state.pendingImagePreview;
+      if (!p) return;
+
+      const itemsHtml = p.foodItems.length
+        ? p.foodItems.map((f, idx) => `
+            <tr data-food-idx="${idx}">
+              <td class="food-name-col"><input type="text" class="input-food-name" data-food-idx="${idx}" value="${this.escape(f.food_name || 'unknown food')}" placeholder="food name"></td>
+              <td><input type="number" step="0.1" class="input-weight" data-food-idx="${idx}" value="${f.weight_g || 0}" placeholder="weight(g)"></td>
+              <td><input type="number" step="0.1" class="input-calories" data-food-idx="${idx}" value="${f.calories || 0}" placeholder="kcal"></td>
+              <td><input type="number" step="0.01" class="input-carbs" data-food-idx="${idx}" value="${f.carbs || 0}" placeholder="C"></td>
+              <td><input type="number" step="0.01" class="input-protein" data-food-idx="${idx}" value="${f.protein || 0}" placeholder="P"></td>
+              <td><input type="number" step="0.01" class="input-fat" data-food-idx="${idx}" value="${f.fat || 0}" placeholder="F"></td>
+              <td><button type="button" class="btn-delete-food" data-food-idx="${idx}">Delete</button></td>
+            </tr>
+          `).join('')
+        : '<tr><td colspan="7" class="muted">No food items detected.</td></tr>';
+
+      this.imageAnalysisResult.innerHTML = `
+        <div class="preview-card">
+          <div><strong>Image Analysis Result</strong>  ${this.escape(p.analysisSource || 'unknown')}</div>
+          <div class="inline-form-row">
+            <strong>Whole Nutrition Zoom</strong>
+            <input id="image-scale-factor" type="number" step="0.05" min="0.1" value="1.10" style="width:110px;">
+            <button id="image-scale-down" class="btn-secondary slim" type="button">Zoom Out</button>
+            <button id="image-scale-up" class="btn-secondary slim" type="button">Zoom In</button>
+            <button id="image-scale-apply" class="btn-secondary slim" type="button">Apply Factor</button>
+          </div>
+          <table class="food-edit-table">
+            <thead>
+              <tr>
+                <th>Food</th>
+                <th>Mass(g)</th>
+                <th>Calories</th>
+                <th>Carbs</th>
+                <th>Protein</th>
+                <th>Fat</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsHtml}
+            </tbody>
+          </table>
+          <div class="inline-form-row">
+            <button id="refresh-image-totals" class="btn-secondary slim">Refresh Totals</button>
+            <button id="confirm-image-add" class="btn-primary slim">Confirm Add to Timeline</button>
+          </div>
+          <div id="image-total-preview"></div>
+        </div>
+      `;
+
+      // Event listeners for input changes
+      this.imageAnalysisResult.querySelectorAll('[class^="input-"]').forEach(input => {
+        input.addEventListener('change', () => this.updateImageFoodItem(input));
+      });
+
+      // Event listeners for delete buttons
+      this.imageAnalysisResult.querySelectorAll('.btn-delete-food').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          this.deleteImageFoodItem(parseInt(btn.dataset.foodIdx));
+        });
+      });
+
+      // Refresh totals button
+      document.getElementById('refresh-image-totals').addEventListener('click', (e) => {
+        e.preventDefault();
+        this.recalculateImageTotals();
+      });
+
+      // Whole scaling controls
+      const scaleInput = this.imageAnalysisResult.querySelector('#image-scale-factor');
+      const runScale = (factor) => this.applyImageScale(factor);
+      document.getElementById('image-scale-down').addEventListener('click', () => runScale(0.9));
+      document.getElementById('image-scale-up').addEventListener('click', () => runScale(1.1));
+      document.getElementById('image-scale-apply').addEventListener('click', () => {
+        const factor = Number(scaleInput?.value || 1);
+        runScale(factor);
+      });
+
+      // Confirm add button
+      document.getElementById('confirm-image-add').addEventListener('click', () => this.commitImagePreview());
+      this.recalculateImageTotals();
+    }
+
+    applyImageScale(factor) {
+      const p = this.state.pendingImagePreview;
+      if (!p) return;
+      const f = Number(factor || 0);
+      if (!Number.isFinite(f) || f <= 0) {
+        this.showToast('Scale factor must be greater than 0.', 'warning');
+        return;
+      }
+
+      const rows = Array.from(this.imageAnalysisResult.querySelectorAll('tr[data-food-idx]'));
+      rows.forEach((row, idx) => {
+        const weightEl = row.querySelector('.input-weight');
+        const calEl = row.querySelector('.input-calories');
+        const carbEl = row.querySelector('.input-carbs');
+        const proteinEl = row.querySelector('.input-protein');
+        const fatEl = row.querySelector('.input-fat');
+
+        const nextWeight = round(Number(weightEl?.value || p.foodItems[idx]?.weight_g || 0) * f, 2);
+        const nextCal = round(Number(calEl?.value || p.foodItems[idx]?.calories || 0) * f, 2);
+        const nextCarb = round(Number(carbEl?.value || p.foodItems[idx]?.carbs || 0) * f, 2);
+        const nextProtein = round(Number(proteinEl?.value || p.foodItems[idx]?.protein || 0) * f, 2);
+        const nextFat = round(Number(fatEl?.value || p.foodItems[idx]?.fat || 0) * f, 2);
+
+        if (weightEl) weightEl.value = nextWeight;
+        if (calEl) calEl.value = nextCal;
+        if (carbEl) carbEl.value = nextCarb;
+        if (proteinEl) proteinEl.value = nextProtein;
+        if (fatEl) fatEl.value = nextFat;
+
+        if (p.foodItems[idx]) {
+          p.foodItems[idx].weight_g = nextWeight;
+          p.foodItems[idx].calories = nextCal;
+          p.foodItems[idx].carbs = nextCarb;
+          p.foodItems[idx].protein = nextProtein;
+          p.foodItems[idx].fat = nextFat;
+        }
+      });
+
+      this.recalculateImageTotals();
+      this.showToast(`Applied nutrition zoom x${round(f, 2)} to all foods.`, 'success');
+    }
+
+    updateImageFoodItem(input) {
+      const p = this.state.pendingImagePreview;
+      if (!p) return;
+      const idx = parseInt(input.dataset.foodIdx);
+      const field = input.classList[0].replace('input-', '');
+      const fieldMap = {
+        'food-name': 'food_name',
+        weight: 'weight_g',
+        calories: 'calories',
+        carbs: 'carbs',
+        protein: 'protein',
+        fat: 'fat'
+      };
+      if (p.foodItems[idx]) {
+        if (field === 'food-name') {
+          p.foodItems[idx].food_name = String(input.value || '').trim() || p.foodItems[idx].food_name || 'unknown food';
+        } else {
+          p.foodItems[idx][fieldMap[field]] = parseFloat(input.value) || 0;
+        }
+      }
+      this.recalculateImageTotals();
+    }
+
+    deleteImageFoodItem(idx) {
+      const p = this.state.pendingImagePreview;
+      if (!p) return;
+      p.foodItems.splice(idx, 1);
+      this.renderImagePreviewEditor();
+    }
+
+    recalculateImageTotals() {
+      const p = this.state.pendingImagePreview;
+      if (!p) return;
+      let total = { calories: 0, carbs: 0, protein: 0, fat: 0 };
+      
+      // Read from form inputs if they exist
+      this.imageAnalysisResult.querySelectorAll('tr[data-food-idx]').forEach(row => {
+        const idx = parseInt(row.dataset.foodIdx);
+        if (p.foodItems[idx]) {
+          const weightVal = parseFloat(row.querySelector('.input-weight')?.value || p.foodItems[idx].weight_g || 0);
+          const caloriesVal = parseFloat(row.querySelector('.input-calories')?.value || p.foodItems[idx].calories || 0);
+          const carbsVal = parseFloat(row.querySelector('.input-carbs')?.value || p.foodItems[idx].carbs || 0);
+          const proteinVal = parseFloat(row.querySelector('.input-protein')?.value || p.foodItems[idx].protein || 0);
+          const fatVal = parseFloat(row.querySelector('.input-fat')?.value || p.foodItems[idx].fat || 0);
+          
+          total.calories += caloriesVal;
+          total.carbs += carbsVal;
+          total.protein += proteinVal;
+          total.fat += fatVal;
+        }
+      });
+      
+      document.getElementById('image-total-preview').innerHTML = `<strong>Totals:</strong> ${formatNutrition(total.calories, total.carbs, total.protein, total.fat)}`;
+      return total;
+    }
+
+    async commitImagePreview() {
+      const p = this.state.pendingImagePreview;
+      if (!p) return;
+      
+      // Sync form values back to state before committing
+      this.imageAnalysisResult.querySelectorAll('tr[data-food-idx]').forEach(row => {
+        const idx = parseInt(row.dataset.foodIdx);
+        if (p.foodItems[idx]) {
+          p.foodItems[idx].food_name = String(row.querySelector('.input-food-name')?.value || p.foodItems[idx].food_name || 'unknown food').trim() || 'unknown food';
+          p.foodItems[idx].weight_g = parseFloat(row.querySelector('.input-weight')?.value || p.foodItems[idx].weight_g || 0);
+          p.foodItems[idx].calories = parseFloat(row.querySelector('.input-calories')?.value || p.foodItems[idx].calories || 0);
+          p.foodItems[idx].carbs = parseFloat(row.querySelector('.input-carbs')?.value || p.foodItems[idx].carbs || 0);
+          p.foodItems[idx].protein = parseFloat(row.querySelector('.input-protein')?.value || p.foodItems[idx].protein || 0);
+          p.foodItems[idx].fat = parseFloat(row.querySelector('.input-fat')?.value || p.foodItems[idx].fat || 0);
+        }
+      });
+
+      this.recalculateImageTotals();
+      const total = p.foodItems.reduce((a, f) => {
+        a.calories += Number(f.calories || 0);
+        a.carbs += Number(f.carbs || 0);
+        a.protein += Number(f.protein || 0);
+        a.fat += Number(f.fat || 0);
+        return a;
+      }, { calories: 0, carbs: 0, protein: 0, fat: 0 });
+
+      // Backend endpoint integration marker: /api/update-image-food-label
+      // We keep advanced per-region relabeling flow available via /upload_image route.
+
+      const next = deepCopy(this.state.entriesByDate);
+      const arr = next[this.state.selectedDate] || [];
+      arr.push({
+        id: `entry-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        ts: Date.now(),
+        source: 'image',
+        label: `Image meal (${p.foodItems.length} items)`,
+        nutrition: total,
+        details: deepCopy(p.foodItems),
+      });
+      next[this.state.selectedDate] = arr;
+      this.state.pendingImagePreview = null;
+      this.imageAnalysisResult.innerHTML = '';
+      this.mealImage.value = '';
+      this.renderUploadedImagePreview();
+      this.imageHints.value = '';
+      this.imageContainerSize.value = '';
+      this.applyStatePatch(next, 'add-image');
+    }
+
+    async runRecommendation(options = {}) {
+      const suppressAlerts = !!options.suppressAlerts;
+      const force = !!options.force;
+      if (!this.state.activeUserId) {
+        if (!suppressAlerts) this.showToast('Create or switch user first.', 'info');
+        this.state.recommendationStatus = 'No active user. Please create or switch user first.';
+        this.renderRecommendationPanels();
+        this.setRecommendationFailed('No active user selected.');
+        return;
+      }
+      const totals = this.calculateTotals();
+      const profile = this.state.profile || {};
+      const requestKey = this.getRecommendationRequestKey();
+
+      // Skip repeat requests for identical inputs to keep recommendation refresh responsive.
+      if (!force && this.state.recommendation && this.state.recommendationRequestKey === requestKey) {
+        this.state.recommendationStatus = '';
+        this.renderRecommendationPanels();
+        this.setRecommendationFinished('Recommendations are up to date.');
+        return;
+      }
+
+      if (this.state.recommendationInFlight && !force) {
+        return;
+      }
+
+      this.state.recommendationStatus = 'Calculating latest recommendation...';
+      this.setRecommendationLoading(true, 'Calculating latest recommendation...');
+      this.renderRecommendationPanels();
+
+      const btn = this.runRecommendationBtn;
+      const hasBtn = !!btn;
+      const originalLabel = hasBtn ? btn.textContent : '';
+      if (hasBtn) {
+        btn.disabled = true;
+        btn.textContent = 'Calculating...';
+      }
+
+      try {
+        this.state.recommendationInFlight = requestKey;
+        // Backend endpoint integration: /api/calculate-recommendation
+        const r = await fetch(API.calculateRecommendation, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: this.state.activeUserId,
+            user_info: profile,
+            daily_nutrition: totals,
+          }),
+        });
+
+        const contentType = String(r.headers.get('content-type') || '');
+        let data = null;
+        if (contentType.includes('application/json')) {
+          data = await r.json();
+        } else {
+          const text = await r.text();
+          try {
+            data = JSON.parse(text);
+          } catch (_) {
+            data = { error: text || 'Unexpected server response.' };
+          }
+        }
+
+        if (!r.ok) {
+          const msg = data?.error || 'Recommendation failed';
+          this.state.recommendationStatus = msg;
+          this.renderRecommendationPanels();
+          this.setRecommendationFailed(msg);
+          if (!suppressAlerts) this.showToast(msg, 'error');
+          return;
+        }
+
+        if (!data || !data.recommendation) {
+          const msg = 'Recommendation response was empty. Please try again.';
+          this.state.recommendationStatus = msg;
+          this.renderRecommendationPanels();
+          this.setRecommendationFailed(msg);
+          if (!suppressAlerts) this.showToast(msg, 'error');
+          return;
+        }
+
+        this.state.recommendation = data.recommendation || null;
+        this.state.recommendationRequestKey = requestKey;
+        this.state.recommendationStatus = '';
+        this.renderAll();
+        this.setRecommendationFinished('Recommendations finished.');
+      } catch (err) {
+        this.state.recommendationStatus = `Failed to calculate recommendation: ${err?.message || 'Unknown error'}`;
+        this.renderRecommendationPanels();
+        this.setRecommendationFailed(this.state.recommendationStatus);
+        if (!suppressAlerts) {
+          this.showToast(`Failed to calculate recommendation: ${err?.message || 'Unknown error'}`, 'error');
+        }
+      } finally {
+        this.state.recommendationInFlight = null;
+        if (hasBtn) {
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+        }
+      }
+    }
+
+    async runCustomRecipes() {
+      if (!this.state.activeUserId) {
+        this.showToast('Switch to a user first.', 'info');
+        return;
+      }
+      const text = this.customFoodText.value.trim();
+      if (!text) {
+        this.showToast('Enter desired foods first.', 'info');
+        return;
+      }
+
+      if (this.runCustomRecipesBtn.disabled) {
+        return;
+      }
+
+      const totals = this.calculateTotals();
+      const originalLabel = this.runCustomRecipesBtn.textContent;
+      this.runCustomRecipesBtn.disabled = true;
+      this.runCustomRecipesBtn.textContent = 'Generating...';
+      if (this.customRecipesRuntimeStatus) {
+        this.customRecipesRuntimeStatus.hidden = false;
+        this.customRecipesRuntimeStatus.classList.remove('is-error');
+        this.customRecipesRuntimeStatus.classList.add('is-busy');
+        this.customRecipesRuntimeStatus.textContent = 'Generating recipes... please wait.';
+      }
+
+      try {
+        // Backend endpoint integration: /api/calculate-custom-recipes
+        const r = await fetch(API.calculateCustomRecipes, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_info: this.state.profile,
+            daily_nutrition: totals,
+            food_text: text,
+          }),
+        });
+        const data = await r.json();
+        if (!r.ok) {
+          this.customRecipesView.innerHTML = `<div class="error">${this.escape(data.error || 'Failed')}</div>`;
+          if (this.customRecipesRuntimeStatus) {
+            this.customRecipesRuntimeStatus.classList.remove('is-busy');
+            this.customRecipesRuntimeStatus.classList.add('is-error');
+            this.customRecipesRuntimeStatus.textContent = 'Failed to generate recipes. Please try again.';
+          }
+          return;
+        }
+
+        this.state.customRecipes = data;
+        this.customRecipesView.innerHTML = (data.recipes || []).map((rec) => `
+          <div class="recipe-card">
+            <strong>${this.escape(rec.title || 'Recipe')}</strong>
+            <div>${(rec.foods || []).map((f) => `${this.escape(f.name)} ${round(f.gram, 2)}g`).join(', ')}</div>
+            <small>Supplies: Carbs ${round(rec.supplied?.carbs || 0, 2)}g | Protein ${round(rec.supplied?.protein || 0, 2)}g | Fat ${round(rec.supplied?.fat || 0, 2)}g</small>
+          </div>
+        `).join('') || '<div class="empty-state">No recipes generated.</div>';
+
+        if (this.customRecipesRuntimeStatus) {
+          this.customRecipesRuntimeStatus.classList.remove('is-busy', 'is-error');
+          this.customRecipesRuntimeStatus.textContent = 'Recipe generation complete.';
+        }
+      } catch (err) {
+        this.customRecipesView.innerHTML = `<div class="error">${this.escape(err?.message || 'Failed')}</div>`;
+        if (this.customRecipesRuntimeStatus) {
+          this.customRecipesRuntimeStatus.classList.remove('is-busy');
+          this.customRecipesRuntimeStatus.classList.add('is-error');
+          this.customRecipesRuntimeStatus.textContent = 'Failed to generate recipes. Please try again.';
+        }
+      } finally {
+        this.runCustomRecipesBtn.disabled = false;
+        this.runCustomRecipesBtn.textContent = originalLabel;
+      }
+    }
+
+    async downloadStlZip(optionIndex) {
+      const rec = this.state.recommendation;
+      const result = rec?.results?.[optionIndex];
+      if (!result) return;
+      const files = (result[0] || []).map((f) => f.mesh).filter(Boolean);
+      if (!files.length) return;
+      const r = await fetch(API.downloadStlZip, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files, folder_name: result[4] || `option_${optionIndex + 1}` }),
+      });
+      if (!r.ok) {
+        this.showToast('ZIP download failed', 'error');
+        return;
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${result[4] || `option_${optionIndex + 1}`}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    downloadObj(optionIndex) {
+      const rec = this.state.recommendation;
+      const result = rec?.results?.[optionIndex];
+      const objName = result?.[5];
+      if (!objName) {
+        this.showToast('OBJ file is not available for this option.', 'info');
+        return;
+      }
+      window.open(API.downloadObj(objName), '_blank', 'noopener');
+    }
+
+    openStlList(optionIndex) {
+      const rec = this.state.recommendation;
+      const result = rec?.results?.[optionIndex];
+      if (!result) return;
+      const files = (result[0] || []).map((f) => f.mesh).filter(Boolean);
+      if (!files.length) return;
+      const links = files.map((f) => `<a href="${API.downloadStl(f)}" target="_blank" rel="noopener">${this.escape(f)}</a>`).join('<br>');
+      this.printingModelsView.insertAdjacentHTML('beforeend', `<div class="model-links">${links}</div>`);
+    }
+
+    async loadUsers() {
+      const r = await fetch(API.users);
+      if (!r.ok) return;
+      const data = await r.json();
+      this.state.users = data.records || [];
+      await this.syncActiveUserFromBackend();
+    }
+
+    async fetchUserRecord(userId) {
+      if (!userId) return null;
+      const r = await fetch(API.userDetail(userId));
+      if (!r.ok) return null;
+      const data = await r.json();
+      return data.record || null;
+    }
+
+    async syncActiveUserFromBackend() {
+      const activeUserId = this.state.activeUserId;
+      const token = ++this.state.activeUserSyncToken;
+
+      if (!activeUserId) {
+        this.state.activeUser = null;
+        this.state.profile = {};
+        return;
+      }
+
+      const record = await this.fetchUserRecord(activeUserId);
+      if (token !== this.state.activeUserSyncToken || this.state.activeUserId !== activeUserId) {
+        return;
+      }
+
+      if (record && record.user_id === activeUserId) {
+        this.state.activeUser = record;
+        this.state.profile = { ...(record.user_info || {}) };
+      } else {
+        this.state.activeUser = this.state.users.find((u) => u.user_id === activeUserId) || null;
+        this.state.profile = { ...(this.state.activeUser?.user_info || {}) };
+        if (!this.state.activeUser) {
+          this.state.activeUserId = '';
+          localStorage.removeItem(LS_KEYS.activeUserId);
+        }
+      }
+
+      await this.loadDayFromBackend(this.state.selectedDate);
+    }
+
+    setActiveUser(userRecord) {
+      const nextUserId = userRecord?.user_id || '';
+      this.state.activeUser = userRecord;
+      this.state.activeUserId = nextUserId;
+      this.state.profile = { ...(userRecord?.user_info || {}) };
+      this.state.customRecipeCollapsed = this.hasPreferredFoods();
+      localStorage.setItem(LS_KEYS.activeUserId, this.state.activeUserId);
+      // Store timestamp of last used account
+      if (nextUserId) {
+        localStorage.setItem(`lastUserTime.${nextUserId}`, Date.now().toString());
+      }
+      this.state.recommendation = null;
+      this.state.customRecipes = null;
+      const token = ++this.state.activeUserSyncToken;
+      this.syncActiveUserFromBackend().then(() => {
+        if (token !== this.state.activeUserSyncToken || this.state.activeUserId !== nextUserId) return;
+        this.renderAll();
+        this.loadDailyHistoryForMonth();
+      });
+    }
+
+    async createUser() {
+      const name = this.createUserName.value.trim();
+      if (!name) return;
+
+      // Backend endpoint integration: /api/user-records
+      const r = await fetch(API.users, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        this.showToast(data.error || 'Create user failed', 'error');
+        return;
+      }
+      this.state.users.push(data.user);
+      this.createUserName.value = '';
+      this.setActiveUser(data.user);
+      this.showToast('User created successfully', 'success');
+      this.renderAll();
+    }
+
+    async handleUserAction(action, userId) {
+      const user = this.state.users.find((u) => u.user_id === userId);
+      if (!user) return;
+      if (action === 'switch') {
+        this.setActiveUser(user);
+        this.renderAll();
+        return;
+      }
+      if (action === 'delete') {
+        const confirmed = await this.showConfirmation(
+          'Delete User?',
+          'Delete this user and all their data?'
+        );
+        if (!confirmed) return;
+
+        // Backend endpoint integration: /api/user-records/<user_id>
+        const r = await fetch(API.userDetail(userId), { method: 'DELETE' });
+        if (!r.ok) {
+          this.showToast('Delete failed', 'error');
+          return;
+        }
+        this.state.users = this.state.users.filter((u) => u.user_id !== userId);
+        if (this.state.activeUserId === userId) {
+          this.state.activeUserId = '';
+          this.state.activeUser = null;
+          this.state.profile = {};
+          this.state.entriesByDate = {};
+          localStorage.removeItem(LS_KEYS.activeUserId);
+        }
+        this.showToast('User deleted successfully', 'success');
+        this.renderAll();
+      }
+    }
+
+    async saveProfile(userId, formEl) {
+      const targetUserId = userId || this.state.activeUserId;
+      if (!targetUserId) {
+        this.showToast('Select user first.', 'info');
+        return;
+      }
+      if (!formEl) {
+        this.showToast('Profile form not found.', 'error');
+        return;
+      }
+      const formData = new FormData(formEl);
+      const nextProfile = Object.fromEntries(formData.entries());
+      nextProfile.name = (nextProfile.name || '').trim();
+      if (!nextProfile.name) {
+        this.showToast('Username is required.', 'info');
+        return;
+      }
+      if (this.state.activeUserId === targetUserId) {
+        this.state.profile = nextProfile;
+      }
+
+      // Backend endpoint integration: /api/user-records
+      const r = await fetch(API.users, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: targetUserId, user_info: nextProfile }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        this.showToast(d.error || 'Profile save failed', 'error');
+        return;
+      }
+      const refreshed = await this.fetchUserRecord(targetUserId);
+      if (refreshed && refreshed.user_id === targetUserId) {
+        const u = this.state.users.find((x) => x.user_id === targetUserId);
+        if (u) u.user_info = { ...(refreshed.user_info || {}) };
+        if (this.state.activeUserId === targetUserId) {
+          this.state.activeUser = refreshed;
+          this.state.profile = { ...(refreshed.user_info || {}) };
+          this.state.customRecipeCollapsed = this.hasPreferredFoods();
+        }
+      }
+      this.showToast('Profile saved successfully', 'success');
+      this.renderAll();
+    }
+
+    async saveDayToBackend() {
+      if (!this.state.activeUserId) return;
+      const totals = this.calculateTotals();
+      const recSnapshot = this.state.recommendation ? {
+        calories: this.state.recommendation.calories,
+        carbs: this.state.recommendation.carbohydrate_intake,
+        protein: this.state.recommendation.protein_intake,
+        fat: this.state.recommendation.fat_intake,
+      } : {};
+
+      // Backend endpoint integration: /api/daily-intake/<user_id>
+      const r = await fetch(API.dailyIntake(this.state.activeUserId), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ daily_nutrition: totals, recommended: recSnapshot }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        console.error('Save daily failed', d.error || r.statusText);
+      }
+    }
+
+    async loadDayFromBackend(day) {
+      if (!this.state.activeUserId) return;
+      // Backend endpoint integration: /api/daily-intake/<user_id>
+      const r = await fetch(API.dailyIntake(this.state.activeUserId));
+      if (!r.ok) return;
+      const data = await r.json();
+      const history = data.history || [];
+      const entry = history.find((h) => h.date === day);
+      if (!this.state.entriesByDate[day]) this.state.entriesByDate[day] = [];
+      if (entry && (!this.state.entriesByDate[day] || this.state.entriesByDate[day].length === 0)) {
+        this.state.entriesByDate[day] = [{
+          id: `entry-import-${Date.now()}`,
+          ts: Date.now(),
+          source: 'text',
+          label: 'Imported daily total',
+          nutrition: {
+            calories: Number(entry.nutrition?.calories || 0),
+            carbs: Number(entry.nutrition?.carbs || 0),
+            protein: Number(entry.nutrition?.protein || 0),
+            fat: Number(entry.nutrition?.fat || 0),
+          },
+          recommendationSnapshot: entry.recommended || null,
+        }];
+      }
+      this.renderAll();
+    }
+
+    async loadDailyHistoryForMonth() {
+      if (!this.state.activeUserId) return;
+      const r = await fetch(API.dailyIntake(this.state.activeUserId));
+      if (!r.ok) return;
+      const data = await r.json();
+      const history = data.history || [];
+      history.forEach((h) => {
+        if (!this.state.entriesByDate[h.date] || this.state.entriesByDate[h.date].length === 0) {
+          this.state.entriesByDate[h.date] = [{
+            id: `entry-h-${h.date}`,
+            ts: Date.now(),
+            source: 'text',
+            label: 'Saved daily summary',
+            nutrition: {
+              calories: Number(h.nutrition?.calories || 0),
+              carbs: Number(h.nutrition?.carbs || 0),
+              protein: Number(h.nutrition?.protein || 0),
+              fat: Number(h.nutrition?.fat || 0),
+            },
+            recommendationSnapshot: h.recommended || null,
+          }];
+        }
+      });
+      this.renderAll();
+    }
+
+    shiftCalendar(deltaMonth) {
+      this.state.calendarMonth = new Date(this.state.calendarMonth.getFullYear(), this.state.calendarMonth.getMonth() + deltaMonth, 1);
+      this.renderCalendar();
+    }
+
+    selectDate(key) {
+      this.state.selectedDate = key;
+      this.loadDayFromBackend(key);
+      this.renderAll();
+    }
+
+    openPage(pageKey) {
+      this.navItems.forEach((n) => n.classList.toggle('active', n.dataset.page === pageKey));
+      this.pages.forEach((p) => p.classList.toggle('active', p.id === `page-${pageKey}`));
+      if (pageKey === 'recommendations') {
+        if (!this.state.recommendation) {
+          this.runRecommendation({ suppressAlerts: true });
+        } else if (this.isRecommendationStale()) {
+          this.setRecommendationFinished('Recommendations finished.');
+          this.renderRecommendationRefreshHint();
+        } else {
+          this.setRecommendationFinished('Recommendations finished.');
+          this.renderRecommendationRefreshHint();
+        }
+      } else if (this.recommendationLoadingIndicator) {
+        this.recommendationLoadingIndicator.hidden = true;
+      }
+    }
+
+    openTab(tabKey) {
+      this.tabs.forEach((t) => t.classList.toggle('active', t.dataset.logTab === tabKey));
+      this.tabPanels.forEach((p) => p.classList.toggle('active', p.id === `tab-${tabKey}`));
+    }
+
+    updateSettings() {
+      this.state.settings.autosave = this.autosaveToggle.checked;
+      this.state.settings.confirmDelete = this.confirmDeleteToggle.checked;
+      localStorage.setItem(LS_KEYS.settings, JSON.stringify(this.state.settings));
+    }
+
+    applySidebarState() {
+      const isCollapsed = !!this.state.settings.sidebarCollapsed;
+      const isInsightCollapsed = !!this.state.settings.insightCollapsed;
+      document.body.classList.toggle('sidebar-collapsed', isCollapsed);
+      document.body.classList.toggle('insight-collapsed', isInsightCollapsed);
+      if (this.toggleLeftNavBtn) {
+        this.toggleLeftNavBtn.classList.toggle('is-collapsed', isCollapsed);
+        this.toggleLeftNavBtn.title = isCollapsed ? 'Show menu' : 'Hide menu';
+        this.toggleLeftNavBtn.setAttribute('aria-label', isCollapsed ? 'Show side menu' : 'Hide side menu');
+      }
+      if (this.toggleRightPanelBtn) {
+        this.toggleRightPanelBtn.classList.toggle('is-collapsed', isInsightCollapsed);
+        this.toggleRightPanelBtn.title = isInsightCollapsed ? 'Show insights' : 'Hide insights';
+        this.toggleRightPanelBtn.setAttribute('aria-label', isInsightCollapsed ? 'Show insights panel' : 'Hide insights panel');
+      }
+    }
+
+    toggleSidebar() {
+      this.state.settings.sidebarCollapsed = !this.state.settings.sidebarCollapsed;
+      this.applySidebarState();
+      localStorage.setItem(LS_KEYS.settings, JSON.stringify(this.state.settings));
+    }
+
+    toggleInsightPanel() {
+      this.state.settings.insightCollapsed = !this.state.settings.insightCollapsed;
+      this.applySidebarState();
+      localStorage.setItem(LS_KEYS.settings, JSON.stringify(this.state.settings));
+    }
+
+    escape(v) {
+      return String(v || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    window.appUI = new NutritionUI();
+  });
+})();

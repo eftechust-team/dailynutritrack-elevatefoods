@@ -25,15 +25,32 @@
     <main>
         <section class="panel">
             <h2>Upload your food image</h2>
-            <p>High contrast, well-lit top-down photos work best. Accepted formats: JPG, PNG.</p>
+            <p>High contrast, well-lit top-down photos work best. Accepted formats: JPG, JPEG, PNG, WEBP, JFIF, BMP, TIFF.</p>
+            {% if error %}
+            <p class="error-text">{{ error }}</p>
+            {% endif %}
 
             <form method="post" enctype="multipart/form-data" class="upload-box" id="upload-form">
                 <div class="dropzone">
                     <p class="muted">Drop an image here or click to browse</p>
                     <input type="file" name="upload-image" accept="image/*" required>
                 </div>
+
+                <div id="selected-image-preview" class="selected-image-preview" style="display: none;">
+                    <p class="muted">Selected image preview</p>
+                    <img id="selected-image-preview-img" alt="Selected upload preview">
+                </div>
+
+                <p id="upload-status" class="muted" aria-live="polite"></p>
+
+                <label class="input-label" for="food-hints">Optional: food names (comma-separated)</label>
+                <input id="food-hints" name="food-hints" type="text" placeholder="e.g. rice, chicken breast, broccoli">
+
+                <label class="input-label" for="plate-diameter-cm">Plate diameter (cm)</label>
+                <input id="plate-diameter-cm" name="plate-diameter-cm" type="number" min="10" max="40" step="0.5" value="26">
+
                 <div class="actions">
-                    <input type="submit" value="Analyze Image">
+                    <input type="submit" value="Analyze Image" id="analyze-submit-btn">
                 </div>
             </form>
         </section>
@@ -43,12 +60,63 @@
     document.addEventListener('DOMContentLoaded', function() {
         const form = document.getElementById('upload-form');
         const fileInput = form.querySelector('input[type="file"]');
-        
-        form.addEventListener('submit', function(e) {
-            if (!fileInput.files || fileInput.files.length === 0) {
-                e.preventDefault();
-                alert('Please select an image file to analyze.');
+        const statusEl = document.getElementById('upload-status');
+        const submitBtn = document.getElementById('analyze-submit-btn');
+        const previewWrap = document.getElementById('selected-image-preview');
+        const previewImg = document.getElementById('selected-image-preview-img');
+
+        fileInput.addEventListener('change', function() {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) {
+                previewWrap.style.display = 'none';
+                previewImg.removeAttribute('src');
                 return;
+            }
+
+            const objUrl = URL.createObjectURL(file);
+            previewImg.src = objUrl;
+            previewWrap.style.display = 'block';
+            statusEl.textContent = `Selected: ${file.name}`;
+            previewImg.onload = function() {
+                URL.revokeObjectURL(objUrl);
+            };
+        });
+        
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            if (!fileInput.files || fileInput.files.length === 0) {
+                statusEl.textContent = 'Please select an image file to analyze.';
+                return;
+            }
+
+            statusEl.textContent = 'Uploading and analyzing image...';
+            submitBtn.disabled = true;
+            submitBtn.value = 'Analyzing...';
+
+            try {
+                const formData = new FormData(form);
+                const response = await fetch('/upload_image', {
+                    method: 'POST',
+                    body: formData,
+                    redirect: 'follow'
+                });
+
+                if (response.redirected && response.url) {
+                    window.location.href = response.url;
+                    return;
+                }
+
+                // If backend returned HTML (e.g., same page with error), swap page content.
+                const html = await response.text();
+                document.open();
+                document.write(html);
+                document.close();
+            } catch (err) {
+                statusEl.textContent = 'Upload failed. Please retry, or refresh the page.';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.value = 'Analyze Image';
             }
         });
     });

@@ -1,0 +1,38 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "apple",
+            "weight_g": 110.0,
+            "calories": 57.2,
+            "carbs": 15.4,
+            "protein": 0.33,
+            "fat": 0.22,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 899,
+                "y_max": 674
+            },
+            "confidence": 0.92
+        },
+        {
+            "id": 2,
+            "food_name": "blueberry",
+            "weight_g": 5.0,
+            "calories": 2.85,
+            "carbs": 0.7,
+            "protein": 0.04,
+            "fat": 0.01,
+            "cutout_image": "",
+            "bbox": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 899,
+                "y_max": 674
+            },
+            "confidence": 0.96
+        }
+    ]
+}

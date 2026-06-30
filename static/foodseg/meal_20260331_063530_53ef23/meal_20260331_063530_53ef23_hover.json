@@ -1,0 +1,94 @@
+{
+    "hover_items": [
+        {
+            "id": 1,
+            "food_name": "tomato",
+            "weight_g": 250.62,
+            "calories": 45.11,
+            "carbs": 10.02,
+            "protein": 2.51,
+            "fat": 0.5,
+            "bbox": {
+                "x_min": 47,
+                "y_min": 233,
+                "x_max": 642,
+                "y_max": 509
+            }
+        },
+        {
+            "id": 2,
+            "food_name": "tomato",
+            "weight_g": 35.91,
+            "calories": 6.46,
+            "carbs": 1.44,
+            "protein": 0.36,
+            "fat": 0.07,
+            "bbox": {
+                "x_min": 105,
+                "y_min": 483,
+                "x_max": 594,
+                "y_max": 591
+            }
+        },
+        {
+            "id": 3,
+            "food_name": "tomato",
+            "weight_g": 24.87,
+            "calories": 4.48,
+            "carbs": 0.99,
+            "protein": 0.25,
+            "fat": 0.05,
+            "bbox": {
+                "x_min": 47,
+                "y_min": 227,
+                "x_max": 327,
+                "y_max": 468
+            }
+        },
+        {
+            "id": 4,
+            "food_name": "tomato",
+            "weight_g": 22.75,
+            "calories": 4.1,
+            "carbs": 0.91,
+            "protein": 0.23,
+            "fat": 0.05,
+            "bbox": {
+                "x_min": 256,
+                "y_min": 93,
+                "x_max": 444,
+                "y_max": 205
+            }
+        },
+        {
+            "id": 5,
+            "food_name": "onion",
+            "weight_g": 11.38,
+            "calories": 4.55,
+            "carbs": 1.02,
+            "protein": 0.11,
+            "fat": 0.01,
+            "bbox": {
+                "x_min": 47,
+                "y_min": 219,
+                "x_max": 615,
+                "y_max": 306
+            }
+        },
+        {
+            "id": 6,
+            "food_name": "tomato",
+            "weight_g": 10.47,
+            "calories": 1.88,
+            "carbs": 0.42,
+            "protein": 0.1,
+            "fat": 0.02,
+            "bbox": {
+                "x_min": 478,
+                "y_min": 120,
+                "x_max": 620,
+                "y_max": 220
+            }
+        }
+    ]
+}

@@ -1,0 +1,73 @@
+{
+    "total_volume_cm3": 878.57,
+    "total_weight_g": 615.0,
+    "calories": 992.07,
+    "protein": 40.52,
+    "fat": 46.05,
+    "carbs": 114.39,
+    "fiber": 0.0,
+    "sugars": 0.0,
+    "food_items": [
+        {
+            "food_id": 1,
+            "food_name": "ham and veggie fried rice",
+            "volume_cm3": 342.86,
+            "weight_g": 240.0,
+            "calories": 387.15,
+            "protein": 15.82,
+            "fat": 17.97,
+            "carbs": 44.64,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 2,
+            "food_name": "kimchi fried rice",
+            "volume_cm3": 300.0,
+            "weight_g": 210.0,
+            "calories": 338.76,
+            "protein": 13.84,
+            "fat": 15.72,
+            "carbs": 39.06,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 3,
+            "food_name": "pickled mustard greens",
+            "volume_cm3": 78.57,
+            "weight_g": 55.0,
+            "calories": 88.72,
+            "protein": 3.62,
+            "fat": 4.12,
+            "carbs": 10.23,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 4,
+            "food_name": "spicy braised radish banchan",
+            "volume_cm3": 78.57,
+            "weight_g": 55.0,
+            "calories": 88.72,
+            "protein": 3.62,
+            "fat": 4.12,
+            "carbs": 10.23,
+            "fiber": 0.0,
+            "sugars": 0.0
+        },
+        {
+            "food_id": 5,
+            "food_name": "garlic pickled cucumber",
+            "volume_cm3": 78.57,
+            "weight_g": 55.0,
+            "calories": 88.72,
+            "protein": 3.62,
+            "fat": 4.12,
+            "carbs": 10.23,
+            "fiber": 0.0,
+            "sugars": 0.0
+        }
+    ],
+    "analysis_source": "doubao-seed-2-0-mini-260215"
+}
